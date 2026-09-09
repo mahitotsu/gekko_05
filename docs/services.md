@@ -1,10 +1,10 @@
 # サービス仕様
 
-各サービスの存在意義・提供機能・保有データを定義する。認可の詳細は`permission-matrix.md`、委任トポロジーの実装は`DESIGN.md`を参照。
+各サービスの存在意義・提供機能・保有データを定義する。認可の詳細は`permission-matrix.md`、委任トポロジーの実装は`architecture.md`を参照。
 
 ## edge-proxy (nginx)
 
-実装済み（`edge-proxy/`。DESIGN.md §22）。ドメインロジックを持たない純粋なインフラ層のため、認可上の主体ではない。
+実装済み（`edge-proxy/`。architecture.md §17）。ドメインロジックを持たない純粋なインフラ層のため、認可上の主体ではない。
 
 - **存在意義**：ホストに公開する唯一の入口。CDN/APIゲートウェイ相当の位置に置き、ブラウザから見えるオリジンを単一化する
 - **提供機能**：パスベースの振り分けのみ（`/realms/*`・`/resources/*`→Keycloak、それ以外→Frontend）
@@ -13,7 +13,7 @@
 
 ## Frontend (Nuxt / TypeScript, BFF)
 
-実装済み（`frontend/`。DESIGN.md §19, §22）。
+実装済み（`frontend/`。architecture.md §14, §17）。
 
 - **存在意義**：ユーザー（社員）がシステムに触れる唯一の入口。BFF (Backend for Frontend) として、OIDCログイン・トークン保有・DPoP鍵保有を全てサーバーサイドで行い、ブラウザにはアクセストークンを一切渡さない
 - **提供機能**：ログイン（Authorization Code + PKCE、サーバー側で自前実装）、受注登録・照会画面、社員情報照会画面（自分の情報／HR向け全件）。画面から`/api/*`（同一オリジン）を経由してのみ下流サービスへ到達する
@@ -22,7 +22,7 @@
 
 ## Order Service (Java / Spring Boot)
 
-実装済み（`order-service/`。DESIGN.md §14）。
+実装済み（`order-service/`）。
 
 - **存在意義**：受発注業務のドメイン境界。ユーザーが直接操作できる唯一のバックエンドであり、下流サービスへの委任チェーンの起点
 - **提供機能**：受注登録（write）、受注照会（read）。ロール（`order-writer`/`order-reader`）で操作を区別する（permission-matrix.md 表2）
@@ -31,7 +31,7 @@
 
 ## Inventory Service (Go)
 
-実装済み（`inventory-service/`。DESIGN.md §15）。
+実装済み（`inventory-service/`）。
 
 - **存在意義**：商品カタログ横断の**集計・ルーティング層**。「この商品はどこかに在庫があるか」という全社視点の問いに答える。支店が違っても答えは同じであり、拠点別のアクセス制御はここでは行わない
 - **提供機能**：
@@ -43,7 +43,7 @@
 
 ## Warehouse Service (Rust)
 
-実装済み（`warehouse-service/`。DESIGN.md §16）。
+実装済み（`warehouse-service/`）。
 
 - **存在意義**：特定拠点の**実運用在庫データ**を持つ、組織的に独立した拠点システム。多くの企業で支店ごとに実在庫は独立して管理され、他拠点の実数値は組織的に見せないという業務ルールをここで表現する
 - **提供機能**：支店別在庫確認（実数量・引当数）、引当処理。`warehouse-viewer`ロール保持 かつ 照会対象支店が本人の所属支店と一致する場合のみ許可（RBAC+ABAC）。`warehouse-viewer-all`ロール保持者（物流管理担当等）は所属支店と無関係に全支店を照会できる（permission-matrix.md 表5）
@@ -52,9 +52,9 @@
 
 ## Employee Service (Python)
 
-実装済み（`employee-service/`。DESIGN.md §17）。
+実装済み（`employee-service/`）。
 
-- **存在意義**：社員の属性情報を一元管理する**属性局**。他サービスが認可判断のために参照する外部データソース。支店所属のような変化しうる業務データはKeycloakのロールにせず、ここで一元管理する（DESIGN.md §9 参照）
+- **存在意義**：社員の属性情報を一元管理する**属性局**。他サービスが認可判断のために参照する外部データソース。支店所属のような変化しうる業務データはKeycloakのロールにせず、ここで一元管理する
 - **提供機能**：社員情報照会。トークンの`sub`と一致する自分の情報は誰でも照会可、`hr-viewer`ロール保持者は他人の情報も照会可（permission-matrix.md 表4）
 - **保有データ**：社員（所属部署、所属支店、ロール等）— MongoDB
 - **連携相手**：Warehouse Serviceから委任で呼ばれる（所属支店確認）。frontendからも直接呼ばれる（自分の情報照会、HRによる照会）

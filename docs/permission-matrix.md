@@ -1,6 +1,6 @@
 # 権限マップ（ディシジョンテーブル）
 
-DESIGN.md §9-§13で決めた認可設計を、条件と結果が漏れなく列挙できる形（ディシジョンテーブル）で整理する。性質の異なる認可判断ごとに表を分ける。
+architecture.md §9-§13で決めた認可設計を、条件と結果が漏れなく列挙できる形（ディシジョンテーブル）で整理する。性質の異なる認可判断ごとに表を分ける。
 
 ## 表1: 委任トポロジー（Keycloak層・検証済み）
 
@@ -20,7 +20,7 @@ DESIGN.md §9-§13で決めた認可設計を、条件と結果が漏れなく�
   - order/inventory/warehouse-service→自分自身：各クライアントは自分自身が発行するスコープ（例: order-serviceは`order`スコープ）を持っていないため`invalid_scope`
   - employee-service→どこでも：`standard.token.exchange.enabled=false`のため、対象を問わず`Standard token exchange is not enabled for the requested client`で拒否される（これは全5マスに共通する理由であり、employee-serviceの行は構造的に全DENY）
   - X-service→frontend：frontendを対象にするaudienceマッパーが存在しないため`Requested audience not available: frontend`
-- ALLOWの5マスはすべて `optionalClientScopes` の割当のみで実現している（DESIGN.md §12）。Client Policiesは使っていない
+- ALLOWの5マスはすべて `optionalClientScopes` の割当のみで実現している（architecture.md §12）。Client Policiesは使っていない
 
 ## 表2: Order Serviceの操作可否（アプリ層・未実装）
 
