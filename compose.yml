@@ -1,0 +1,246 @@
+services:
+  otel-lgtm:
+    # All-in-one Grafana + Tempo (traces) + Loki + Prometheus/Mimir image. Only
+    # traces (via Tempo) are used here -- no metrics instrumentation or dashboards
+    # are built. One OTLP endpoint (4318 HTTP / 4317 gRPC), zero extra config.
+    image: grafana/otel-lgtm:latest
+    # Documents the container's listening ports in `docker compose ps` (matching
+    # the other services, which get this from their own Dockerfiles' EXPOSE) --
+    # this image's Dockerfile doesn't declare EXPOSE, so nothing shows without this.
+    # Purely informational: no ports: mapping, so nothing is published to the host.
+    expose:
+      - "3000"
+      - "4317"
+      - "4318"
+    environment:
+      # Served under edge-proxy's /grafana/ path instead of its own host port, to
+      # keep only one port (3000, via edge-proxy) open on the host.
+      GF_SERVER_ROOT_URL: http://localhost:3000/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    healthcheck:
+      # This image ships curl, not wget (unlike the other services' base images).
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  keycloak:
+    build: ./keycloak
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Pin the issuer so it's identical whether a client reaches Keycloak via the
+      # docker-internal hostname (other services) or via edge-proxy (host machine,
+      # browser). Without this, Keycloak computes its issuer from the connecting
+      # request's Host header, so a token minted via one path gets rejected as
+      # "Invalid token" when presented back over the other (e.g. during Token
+      # Exchange's subject_token validation). Keycloak is no longer exposed on the
+      # host directly -- edge-proxy is the only public entry point (see docs/DESIGN.md).
+      KC_HOSTNAME: http://localhost:3000
+    healthcheck:
+      # No curl/wget in this image, but bash is available: use its /dev/tcp feature
+      # to hit a realm endpoint we already rely on elsewhere. A 200 here means
+      # Keycloak has finished importing the realm and is actually serving requests.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/localhost/8080 &&
+          echo -e "GET /realms/master/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          head -1 <&3 | grep -q 200
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  order-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: order_service
+      POSTGRES_USER: order_service
+      POSTGRES_PASSWORD: order_service
+    volumes:
+      - ./order-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  order-service:
+    build: ./order-service
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      KEYCLOAK_ISSUER: http://localhost:3000/realms/kikan-system
+      ORDER_SERVICE_CLIENT_SECRET: order-service-secret
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-postgres:5432/order_service
+      SPRING_DATASOURCE_USERNAME: order_service
+      SPRING_DATASOURCE_PASSWORD: order_service
+      INVENTORY_SERVICE_BASE_URL: http://inventory-service:8082
+      OTEL_SERVICE_NAME: order-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      order-postgres:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  inventory-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: inventory_service
+      MYSQL_USER: inventory_service
+      MYSQL_PASSWORD: inventory_service
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - ./inventory-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "inventory_service", "-pinventory_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  inventory-service:
+    build: ./inventory-service
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      KEYCLOAK_ISSUER: http://localhost:3000/realms/kikan-system
+      INVENTORY_SERVICE_CLIENT_SECRET: inventory-service-secret
+      MYSQL_DSN: inventory_service:inventory_service@tcp(inventory-mysql:3306)/inventory_service
+      WAREHOUSE_SERVICE_BASE_URL: http://warehouse-service:8083
+      OTEL_SERVICE_NAME: inventory-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      inventory-mysql:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  warehouse-redis:
+    build: ./warehouse-service/db
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  warehouse-service:
+    build: ./warehouse-service
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      KEYCLOAK_ISSUER: http://localhost:3000/realms/kikan-system
+      WAREHOUSE_SERVICE_CLIENT_SECRET: warehouse-service-secret
+      REDIS_URL: redis://warehouse-redis:6379
+      EMPLOYEE_SERVICE_BASE_URL: http://employee-service:8084
+      OTEL_SERVICE_NAME: warehouse-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      warehouse-redis:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  employee-mongo:
+    image: mongo:7
+    volumes:
+      - ./employee-service/db/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  employee-service:
+    build: ./employee-service
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      KEYCLOAK_ISSUER: http://localhost:3000/realms/kikan-system
+      MONGO_URI: mongodb://employee-mongo:27017
+      OTEL_SERVICE_NAME: employee-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      employee-mongo:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  frontend:
+    build: ./frontend
+    environment:
+      # Nitro (Nuxt's server engine) only overrides runtimeConfig entries at startup
+      # from NUXT_<KEY> env vars -- see nuxt.config.ts.
+      NUXT_KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      NUXT_KEYCLOAK_PUBLIC_URL: http://localhost:3000/realms/kikan-system
+      NUXT_FRONTEND_CLIENT_SECRET: frontend-secret
+      NUXT_PUBLIC_ORIGIN: http://localhost:3000
+      NUXT_ORDER_SERVICE_BASE_URL: http://order-service:8081
+      NUXT_EMPLOYEE_SERVICE_BASE_URL: http://employee-service:8084
+      NUXT_SESSION_SECRET: dev-only-insecure-secret-change-me
+      OTEL_SERVICE_NAME: frontend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000/api/me"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  edge-proxy:
+    build: ./edge-proxy
+    ports:
+      - "3000:3000"
+    depends_on:
+      frontend:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: nginx's `listen 3000;` binds IPv4 only, but this
+      # container's /etc/hosts resolves "localhost" to ::1 first, which wget tries
+      # and gets refused on before ever falling back to the IPv4 address.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/realms/kikan-system/.well-known/openid-configuration"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s

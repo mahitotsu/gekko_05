@@ -1,0 +1,228 @@
+{
+  "realm": "kikan-system",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      { "name": "order-writer" },
+      { "name": "order-reader" },
+      { "name": "inventory-writer" },
+      { "name": "inventory-reader" },
+      { "name": "warehouse-viewer" },
+      { "name": "warehouse-viewer-all" },
+      { "name": "hr-viewer" }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "roles",
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "order",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "aud-order-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "order-service",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "inventory",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "aud-inventory-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "inventory-service",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "warehouse",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "aud-warehouse-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "warehouse-service",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "employee",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "aud-employee-service",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "employee-service",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "frontend",
+      "secret": "frontend-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "defaultClientScopes": ["roles"],
+      "optionalClientScopes": ["order", "employee"],
+      "attributes": {
+        "dpop.bound.access.tokens": "true",
+        "standard.token.exchange.enabled": "true"
+      }
+    },
+    {
+      "clientId": "order-service",
+      "secret": "order-service-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": ["roles"],
+      "attributes": { "standard.token.exchange.enabled": "true" },
+      "optionalClientScopes": ["inventory"]
+    },
+    {
+      "clientId": "inventory-service",
+      "secret": "inventory-service-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": ["roles"],
+      "attributes": { "standard.token.exchange.enabled": "true" },
+      "optionalClientScopes": ["warehouse"]
+    },
+    {
+      "clientId": "warehouse-service",
+      "secret": "warehouse-service-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": ["roles"],
+      "attributes": { "standard.token.exchange.enabled": "true" },
+      "optionalClientScopes": ["employee"]
+    },
+    {
+      "clientId": "employee-service",
+      "secret": "employee-service-secret",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": { "standard.token.exchange.enabled": "false" }
+    }
+  ],
+  "users": [
+    {
+      "username": "yamada-sales",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Taro",
+      "lastName": "Yamada",
+      "email": "yamada-sales@example.com",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "realmRoles": ["order-writer", "inventory-writer", "warehouse-viewer"]
+    },
+    {
+      "username": "suzuki-support",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Jiro",
+      "lastName": "Suzuki",
+      "email": "suzuki-support@example.com",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "realmRoles": ["order-reader", "inventory-reader"]
+    },
+    {
+      "username": "tanaka-hr",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Saburo",
+      "lastName": "Tanaka",
+      "email": "tanaka-hr@example.com",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "realmRoles": ["hr-viewer"]
+    },
+    {
+      "username": "sato-logistics",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Hanako",
+      "lastName": "Sato",
+      "email": "sato-logistics@example.com",
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "realmRoles": ["warehouse-viewer-all"]
+    }
+  ]
+}

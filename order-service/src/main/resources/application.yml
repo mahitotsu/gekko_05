@@ -1,0 +1,39 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: ${OTEL_SERVICE_NAME:order-service}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/order_service}
+    username: ${SPRING_DATASOURCE_USERNAME:order_service}
+    password: ${SPRING_DATASOURCE_PASSWORD:order_service}
+  jpa:
+    hibernate:
+      # Schema is owned by db/init.sql (mounted into the postgres container), not by
+      # Hibernate. `validate` only checks the entity mapping matches the real schema,
+      # it never creates/alters tables. This keeps seeding/migrations explicit and SQL-native.
+      ddl-auto: validate
+    open-in-view: false
+
+app:
+  keycloak:
+    internal-url: ${KEYCLOAK_INTERNAL_URL:http://localhost:8080/realms/kikan-system}
+    issuer: ${KEYCLOAK_ISSUER:http://localhost:8080/realms/kikan-system}
+  order-service:
+    client-id: order-service
+    client-secret: ${ORDER_SERVICE_CLIENT_SECRET:order-service-secret}
+  inventory-service:
+    base-url: ${INVENTORY_SERVICE_BASE_URL:http://localhost:8082}
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      # Same OTEL_EXPORTER_OTLP_ENDPOINT (base URL, no path) env var as the other
+      # 4 services -- Spring's own management.otlp.tracing.endpoint just happens to
+      # want the full /v1/traces URL, so the path suffix is appended here instead
+      # of duplicated into a Spring-only env var name.
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces

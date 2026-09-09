@@ -1,0 +1,8 @@
+cryptography==50.0.1
+fastapi==0.141.1
+PyJWT==2.13.0
+pymongo==4.18.0
+requests==2.34.2
+uvicorn==0.52.4
+opentelemetry-distro
+opentelemetry-exporter-otlp-proto-http
