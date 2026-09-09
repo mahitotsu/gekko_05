@@ -25,7 +25,12 @@ def startup():
     app.state.auth_ctx = AuthContext(jwks_url, keycloak_issuer)
 
     mongo_uri = getenv("MONGO_URI", "mongodb://localhost:27017")
-    app.state.mongo = MongoClient(mongo_uri)["employee_service"]
+    # DB name matches this compose service's own name ("employee-mongo"), not
+    # employee_service -- pymongo's auto-instrumentation reports the real Mongo db
+    # name verbatim as the db.name span attribute, so this is also what shows up as
+    # the node name in Tempo's service graph. Keeping it as employee_service would
+    # read as a confusing near-twin of this service's own "employee-service" node.
+    app.state.mongo = MongoClient(mongo_uri)["employee-mongo"]
 
 
 @app.get("/health")

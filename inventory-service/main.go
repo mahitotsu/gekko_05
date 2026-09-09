@@ -76,9 +76,13 @@ func main() {
 	// otelsql.Open wraps sql.Open, tracing every database/sql call that takes a
 	// context (the DB name shows up as its own node in Tempo's service graph,
 	// analogous to how Keycloak's/employee-service's own DB calls already do).
+	// DBNamespace is purely a reporting label (independent of the real MySQL db name
+	// in dsn above) -- set to match this compose service's own name ("inventory-mysql"),
+	// not "inventory_service", so the node doesn't read as a confusing near-twin of
+	// this service's own "inventory-service" node in the graph.
 	db, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(
 		semconv.DBSystemMySQL,
-		semconv.DBNamespace("inventory_service"),
+		semconv.DBNamespace("inventory-mysql"),
 	))
 	if err != nil {
 		log.Fatalf("opening database: %v", err)

@@ -79,7 +79,13 @@ services:
   order-postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: order_service
+      # DB name matches this compose service's own name, not order_service (which is
+      # kept only for POSTGRES_USER/PASSWORD, i.e. credentials, not a display name) --
+      # avoids the JDBC db.namespace span attribute (this is what order-service's
+      # datasource-micrometer-spring-boot reports, unlike inventory-service/warehouse-service
+      # which have a free-form attribute to set explicitly) rendering as a Tempo service
+      # graph node that reads confusingly like the order-service app itself.
+      POSTGRES_DB: order-postgres
       POSTGRES_USER: order_service
       POSTGRES_PASSWORD: order_service
     volumes:
@@ -96,7 +102,7 @@ services:
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
       KEYCLOAK_ISSUER: http://localhost:3000/realms/kikan-system
       ORDER_SERVICE_CLIENT_SECRET: order-service-secret
-      SPRING_DATASOURCE_URL: jdbc:postgresql://order-postgres:5432/order_service
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-postgres:5432/order-postgres
       SPRING_DATASOURCE_USERNAME: order_service
       SPRING_DATASOURCE_PASSWORD: order_service
       INVENTORY_SERVICE_BASE_URL: http://inventory-service:8082

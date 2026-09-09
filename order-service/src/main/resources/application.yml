@@ -5,7 +5,7 @@ spring:
   application:
     name: ${OTEL_SERVICE_NAME:order-service}
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/order_service}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/order-postgres}
     username: ${SPRING_DATASOURCE_USERNAME:order_service}
     password: ${SPRING_DATASOURCE_PASSWORD:order_service}
   jpa:

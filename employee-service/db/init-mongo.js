@@ -2,7 +2,8 @@
 // automatically on first startup (when the data directory is empty), the same
 // mechanism as postgres/mysql's init scripts -- no custom Dockerfile needed here,
 // unlike Redis.
-db = db.getSiblingDB("employee_service");
+// DB name matches this compose service's own name -- see main.py's MongoClient call.
+db = db.getSiblingDB("employee-mongo");
 
 db.employees.insertMany([
   { username: "yamada-sales", department: "sales", branch: "tokyo" },
