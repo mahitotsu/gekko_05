@@ -3,6 +3,7 @@ module inventory-service
 go 1.25.0
 
 require (
+	github.com/XSAM/otelsql v0.44.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0

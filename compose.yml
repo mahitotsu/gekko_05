@@ -38,17 +38,38 @@ services:
       # Exchange's subject_token validation). Keycloak is no longer exposed on the
       # host directly -- edge-proxy is the only public entry point (see docs/DESIGN.md).
       KC_HOSTNAME: http://localhost:3000
+      # Mirrors the other services' OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT
+      # pair (see keycloak/Dockerfile for why this is runtime env, not a build step).
+      # KC_TRACING_ENDPOINT defaults to gRPC on :4317, which is what otel-lgtm exposes
+      # alongside its :4318 HTTP endpoint.
+      KC_TRACING_ENABLED: "true"
+      KC_TRACING_SERVICE_NAME: keycloak
+      KC_TRACING_ENDPOINT: http://otel-lgtm:4317
+      # Exposes /health/ready etc. on the separate management port (9000 by default),
+      # used below and by edge-proxy's /internal/keycloak-health instead of reusing a
+      # realm endpoint for the healthcheck -- and, unlike a realm endpoint, requests to
+      # it are excluded from tracing automatically (Quarkus's
+      # quarkus.otel.traces.suppress-non-application-uris, on by default, covers its
+      # own health/metrics endpoints; a past bug where enabling the management
+      # interface defeated this suppression was fixed in Quarkus 3.15.4, well below
+      # the 3.27.1 this Keycloak version bundles -- verified empirically).
+      KC_HEALTH_ENABLED: "true"
+    depends_on:
+      otel-lgtm:
+        condition: service_healthy
     healthcheck:
-      # No curl/wget in this image, but bash is available: use its /dev/tcp feature
-      # to hit a realm endpoint we already rely on elsewhere. A 200 here means
-      # Keycloak has finished importing the realm and is actually serving requests.
+      # No curl/wget in this image, but bash is available: use its /dev/tcp feature.
+      # /health/ready (management port 9000, from --health-enabled=true in the
+      # Dockerfile) reports readiness -- including having finished --import-realm,
+      # since that runs as part of startup before Quarkus marks the app ready --
+      # without reusing a realm endpoint the way the old /realms/master/... check did.
       test:
         - CMD
         - bash
         - -c
         - >-
-          exec 3<>/dev/tcp/localhost/8080 &&
-          echo -e "GET /realms/master/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          exec 3<>/dev/tcp/localhost/9000 &&
+          echo -e "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
           head -1 <&3 | grep -q 200
       interval: 5s
       timeout: 5s
@@ -218,7 +239,10 @@ services:
       otel-lgtm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000/api/me"]
+      # /api/me is also hit for real by app.vue's own session check, so it's marked
+      # with X-Health-Check here and filtered out by otel.mjs's ignoreIncomingRequestHook
+      # -- otherwise this 5s-interval probe would flood the service graph with noise.
+      test: ["CMD", "wget", "-q", "-O", "-", "--header=X-Health-Check: 1", "http://localhost:3000/api/me"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -239,7 +263,7 @@ services:
       # 127.0.0.1, not localhost: nginx's `listen 3000;` binds IPv4 only, but this
       # container's /etc/hosts resolves "localhost" to ::1 first, which wget tries
       # and gets refused on before ever falling back to the IPv4 address.
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/realms/kikan-system/.well-known/openid-configuration"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/internal/keycloak-health"]
       interval: 5s
       timeout: 5s
       retries: 12

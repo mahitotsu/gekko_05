@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/go-sql-driver/mysql"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -73,7 +73,13 @@ func main() {
 	dsn := getenv("MYSQL_DSN", "inventory_service:inventory_service@tcp(localhost:3306)/inventory_service")
 	warehouseBaseURL := getenv("WAREHOUSE_SERVICE_BASE_URL", "http://localhost:8083")
 
-	db, err := sql.Open("mysql", dsn)
+	// otelsql.Open wraps sql.Open, tracing every database/sql call that takes a
+	// context (the DB name shows up as its own node in Tempo's service graph,
+	// analogous to how Keycloak's/employee-service's own DB calls already do).
+	db, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(
+		semconv.DBSystemMySQL,
+		semconv.DBNamespace("inventory_service"),
+	))
 	if err != nil {
 		log.Fatalf("opening database: %v", err)
 	}
@@ -98,5 +104,10 @@ func main() {
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-writer"}, handlers.reserve))
 
 	log.Println("inventory-service listening on :8082")
-	log.Fatal(http.ListenAndServe(":8082", otelhttp.NewHandler(mux, "inventory-service")))
+	// WithFilter skips span creation for the compose healthcheck's GET /health (hit
+	// every 5s) -- otherwise it floods the service graph with a caller-less node.
+	otelHandler := otelhttp.NewHandler(mux, "inventory-service", otelhttp.WithFilter(func(r *http.Request) bool {
+		return r.URL.Path != "/health"
+	}))
+	log.Fatal(http.ListenAndServe(":8082", otelHandler))
 }

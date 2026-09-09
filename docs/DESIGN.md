@@ -262,11 +262,11 @@ realm importでは（単純な`POST /admin/realms`でのrealm作成と異なり�
 
 全11コンテナに`healthcheck`を設定し、`depends_on`を`condition: service_healthy`にした（frontend・edge-proxyは§22のBFF移行時に追加）。`docker compose up -d`一発で手動再起動なしに全サービスが`healthy`になることを実機で確認済み。
 
-- **Keycloak**：イメージに`curl`/`wget`が無い（UBI Micro系ベース）が`bash`はあるため、`/dev/tcp`でrealmのwell-known endpointに直接HTTPリクエストを送り200を確認する方式にした。専用のヘルスエンドポイント（管理ポート9000の`/health/ready`）は今回のデフォルト設定では有効になっていなかった
+- **Keycloak**：イメージに`curl`/`wget`が無い（UBI Micro系ベース）が`bash`はあるため、`/dev/tcp`で直接HTTPリクエストを送り200を確認する方式にした。当初はrealmのwell-known endpointを使っていたが、§21のトレーシング導入時に専用のヘルスエンドポイント（`KC_HEALTH_ENABLED=true`で有効化されるmanagementポート9000の`/health/ready`）に切り替えた。理由は2つ：(1) ビジネス用エンドポイントを間借りするより「Keycloak自身が readyと申告しているか」を直接見るほうが本来の意味で正しい、(2) このエンドポイントはQuarkusの計装から自動除外されるため、5秒間隔のヘルスチェックがトレースのノイズにならない
 - **postgres/mysql/redis/mongo**：各公式イメージの標準ツール（`pg_isready`, `mysqladmin ping`, `redis-cli ping`, `mongosh --eval`）をそのまま使用
 - **4アプリサービス**：各サービスに認証不要の`GET /health`を追加し、`wget`（Java/Go/Rustの最終イメージはalpine系で軽量なため`curl`ではなく`wget`を追加）または`python3 -c "import urllib.request..."`（Pythonは標準機能だけで足りるため追加パッケージ不要）で確認
 - **frontend（Nuxt）**：既存の`GET /api/me`（認証不要、未ログイン時は`{loggedIn:false}`を返す）をそのままヘルスチェックに使用。専用エンドポイントの追加は不要だった
-- **edge-proxy（nginx）**：`/realms/.../well-known/openid-configuration`（Keycloakへのプロキシ経由）へのリクエストで確認。nginx自身の生存だけでなく、Keycloakへの実際のプロキシ経路まで検証できる
+- **edge-proxy（nginx）**：当初はKeycloakの`/realms/.../well-known/openid-configuration`（ビジネス用エンドポイント）へのプロキシ経由リクエストで確認していたが、§21での見直しで専用の内部ロケーション`/internal/keycloak-health`（Keycloakの`/health/ready`へプロキシするだけ）に切り替えた。nginx自身の生存とKeycloakへの実際のプロキシ経路の両方を検証できる点は変わらないが、ビジネス用エンドポイントを間借りしない分Keycloak側でも意味的に正しいヘルスチェックになった
 - 依存関係は「各アプリサービス→Keycloak（healthy）＋自分のDB（healthy）」のみとした。アプリサービス間（order→inventory→warehouse→employee）は起動時に呼び合わないため、`depends_on`の対象に含める必要はない（起動失敗の実例はKeycloak未起動時のJWKS取得失敗によるクラッシュのみだった）。edge-proxyのみ例外的に`frontend`・`keycloak`両方の`service_healthy`を待つ（自身がプロキシする2つの宛先そのものだから）
 
 ## 19. Frontend実装（BFF、v1: SPA + oidc-client-tsは廃止）
@@ -297,17 +297,52 @@ v1時代に見つかった「CORS未設定」「ID Tokenにクレームが載っ
 
 ## 21. OpenTelemetry分散トレーシング実装
 
-§10で決めた方針（独自ヘッダは発明せずOpenTelemetry/W3C Trace Contextに従う）を実装。5サービス全てに各言語のOTel SDK/自動計装を導入し、`grafana/otel-lgtm`（Tempoのみ使用、メトリクス・ダッシュボードは対象外）へOTLP/HTTP(protobuf)でエクスポートする。
+§10で決めた方針（独自ヘッダは発明せずOpenTelemetry/W3C Trace Contextに従う）を実装。5サービス＋Keycloakに各言語のOTel SDK/自動計装を導入し、`grafana/otel-lgtm`（Tempoのみ使用、メトリクス・ダッシュボードは対象外）へOTLP/HTTP(protobuf)でエクスポートする。edge-proxyは意図的に計装しない（後述）。
 
-- **各サービスの実装方式**：Order Service（Java）はSpring Boot標準のMicrometer OTelブリッジ（`spring-boot-starter-actuator` + `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`、`RestClient.Builder`はSpring自動設定のもの経由でDIし直して自動計装を効かせる）。Inventory Service（Go）は`otelhttp.NewHandler`でmuxをラップし、`otelhttp.NewTransport`を使うHTTPクライアントで発信側も計装。Warehouse Service（Rust/axum）は`axum-tracing-opentelemetry`のミドルウェア。Employee Service（Python/FastAPI）は`opentelemetry-instrument`によるゼロコード自動計装。Frontend（Nuxt/Nitro）はNode `--import`で`server/otel.mjs`を起動前に読み込み`NodeSDK`＋`HttpInstrumentation`/`UndiciInstrumentation`を登録
-- **env変数はサービス間で統一**：`OTEL_SERVICE_NAME` / `OTEL_EXPORTER_OTLP_ENDPOINT`（ベースURL、パスは各SDKが付与）の2本を5サービス共通で使う。JavaのみSpring側の設定キーが`management.otlp.tracing.endpoint`（フルURL必須）だが、`${OTEL_EXPORTER_OTLP_ENDPOINT:...}/v1/traces`という形でプレースホルダ+リテラル連結し、env変数名自体は統一を保った
+- **各サービスの実装方式**：Order Service（Java）はSpring Boot標準のMicrometer OTelブリッジ（`spring-boot-starter-actuator` + `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`、`RestClient.Builder`はSpring自動設定のもの経由でDIし直して自動計装を効かせる）。Inventory Service（Go）は`otelhttp.NewHandler`でmuxをラップし、`otelhttp.NewTransport`を使うHTTPクライアントで発信側も計装。Warehouse Service（Rust/axum）は`axum-tracing-opentelemetry`のミドルウェア（発信側は計装ライブラリが無く手動対応、後述）。Employee Service（Python/FastAPI）は`opentelemetry-instrument`によるゼロコード自動計装。Frontend（Nuxt/Nitro）はNode `--import`で`server/otel.mjs`を起動前に読み込み`NodeSDK`＋`HttpInstrumentation`/`UndiciInstrumentation`を登録。Keycloakは`KC_TRACING_ENABLED`/`KC_HEALTH_ENABLED`（Quarkus標準機能、コード変更不要）
+- **DBレベルのスパンも追加**：Order Service（JDBC/PostgreSQL）は`net.ttddyy.observation:datasource-micrometer-spring-boot`（1.x系、Spring Boot 3.x向け。2.x系はSpring Boot 4.x向けなので注意）を依存追加するだけで、既存の`DataSource` Beanに自動でMicrometer Observationの計装が乗る。Inventory Service（MySQL）は`sql.Open`を`github.com/XSAM/otelsql`の`otelsql.Open`に置き換えるだけ。Warehouse Service（Redis）は計装ライブラリが存在せず手動スパン（後述）。Keycloak（H2）とEmployee Service（MongoDB）はそれぞれQuarkusのHibernate計装／Pythonのゼロコード自動計装が pymongo を自動検出するため、追加作業なしで最初から取れていた
+- **env変数はサービス間で統一**：`OTEL_SERVICE_NAME` / `OTEL_EXPORTER_OTLP_ENDPOINT`（ベースURL、パスは各SDKが付与）の2本を共通で使う。JavaのみSpring側の設定キーが`management.otlp.tracing.endpoint`（フルURL必須）だが、`${OTEL_EXPORTER_OTLP_ENDPOINT:...}/v1/traces`という形でプレースホルダ+リテラル連結し、env変数名自体は統一を保った
 - **Grafanaはedge-proxy経由でサブパス公開**：`otel-lgtm`のホストポートは公開せず（`GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH`で`/grafana/`配下に設定）、edge-proxyの`/grafana/`から`otel-lgtm:3000`へプロキシ。ホストに公開するポートを3000番（edge-proxy）のみに保つため
-- **実機検証済み**：Playwright E2Eテスト（実際の受注フロー）を実行し、Tempoに対して`frontend → order-service → inventory-service → warehouse-service → employee-service`の5サービス・19スパンが単一のtraceIDで連結されていることをTempo検索APIで直接確認した（W3C traceparentの伝播が実際に機能している証拠。単に各サービスがバラバラにスパンを出しているだけではない）
+- **ヘルスチェックはトレースから除外**：docker composeの各ヘルスチェック（5秒間隔）がそのままスパン化されるとTempoのservice graphが常時ノイズだらけになる。サービスごとに手段が異なる：Go(`otelhttp.WithFilter`)、Rust(axum-tracing-opentelemetryの層を通す**前**に`/health`ルートを追加。層は追加済みルートしかラップしないという仕様通りの挙動)、Python(`OTEL_PYTHON_FASTAPI_EXCLUDED_URLS`環境変数。ゼロコード計装のため他に手段が無い)、Java(`ObservationPredicate` Bean)、Nuxt(`HttpInstrumentation`の`ignoreIncomingRequestHook`。`/api/me`は実際のセッション確認にも使われる二重目的のエンドポイントのため、パスではなくヘルスチェック側が送る`X-Health-Check`ヘッダで判別)、Keycloak(`--health-enabled`でmanagementポート`9000`の`/health/ready`に切り替え。Quarkusの`quarkus.otel.traces.suppress-non-application-uris`が既定で有効なため計装から自動除外される)
+- **実機検証済み**：ログイン→受注登録の実フローを流し、Tempoに対して`edge-proxy → frontend → order-service → inventory-service → warehouse-service/keycloak/employee-service`の各スパンが単一のtraceIDで連結されていること、およびPrometheus上の`traces_service_graph_request_total`が実態通りのエッジ（`user → frontend`/`user → keycloak`、各サービス間の呼び出し、各サービスのDB接続）を示していることを直接確認した
 
-### 実装中に踏んだ、再発しそうな罠
+### frontendが実は一切トレースを出していなかった：Node の `--import` だけではESMは計装されない
+
+サービスグラフを見ると、Keycloakの内部DBスパン以外ほぼ全てのノードが素性不明の「user」に直結して見える、という指摘から発覚。原因はfrontend（Nuxt/Nitro）が**受信リクエストのスパンを一切生成していなかった**ことで、edge-proxyから渡された`traceparent`を引き継げず、frontendから先の全呼び出しがそれぞれ新規のルートトレースとして始まっていた。
+
+- `@opentelemetry/instrumentation-http`等のNode計装は`import-in-the-middle`（`require-in-the-middle`のESM版）でモジュールロードをフックする。Nitroのビルド成果物（`.output/server/index.mjs`）は純粋なESMで、Node起動時の`--import ./server/otel.mjs`フラグは**CommonJSの`require()`しかフックできない**。ネイティブの`import`文には一切効かず、`http.createServer.__wrapped`が`undefined`のまま＝計装ゼロという状態になっていた
+- `@opentelemetry/instrumentation`パッケージ自身のREADMEに答えがある：「ESM計装用の専用フックは`--experimental-loader=@opentelemetry/instrumentation/hook.mjs`」。ただしこのCLIフラグはNode側で非推奨警告が出るため、`node:module`の`register()`（Node 20.6+/18.19+の非推奨ではない代替API）を`server/otel.mjs`の一番最初で呼ぶ形で実装した
+- 実機検証：修正前は`/api/me`への実リクエストを送って70秒待ってもTempoに一切現れなかった（healthcheck由来のノイズではなく、本当にゼロ）。修正後、edge-proxy→frontendのスパンが正しく親子連結されることを確認した
+
+### edge-proxyは意図的に計装しない：nginxの otel モジュールは受信側のスパンしか作れない
+
+当初edge-proxy（nginx、`nginx:*-alpine-otel`イメージ + `ngx_otel_module`）にも計装を入れたが、最終的に撤去した。
+
+- `ngx_otel_module`が提供するディレクティブは`otel_exporter`・`otel_service_name`・`otel_trace`・`otel_trace_context`等のみで、`proxy_pass`で下流に転送する側に対応する`CLIENT`スパンを生成する機能が存在しない。生成されるのは常に受信リクエストの`SPAN_KIND_SERVER`スパン1本のみ
+- Tempoのservice graph生成処理（`metrics_generator`の`service-graphs`プロセッサ、Grafanaの「Service Graph」パネルの実データ源）は、CLIENT側スパンとSERVER側スパンのペア（spanIdとparentSpanIdの一致）を根拠にエッジを描画する。生トレース（waterfall表示）ではparentSpanIdによる親子関係がそのまま可視化されるため正しく繋がって見えるが、この2つは別のパイプラインであり、edge-proxy側にCLIENTスパンが無い以上Service Graphは「呼び出し元不明」として下流（Keycloak・frontend）を`user`直結として描画する。Tempo公式ドキュメントにも明記されている既知の仕様（"Uninstrumented client (missing client span)"）であり、バグではない
+- `otel_trace_context propagate`（受信traceparentの継承＋下流への注入）自体は正しく機能しており、これを外すと今度は**trace_id自体が下流で分断される**（実機で確認済み：Keycloak側が全く別のtraceIDでルートトレースを開始してしまう）。「service graphのエッジが直らない」問題と「trace_idが分断される」問題は別物なので混同しないこと
+- 解決策（Collectorでのスパン合成、`peer_attributes`によるピア名推定、Envoy等への置き換え）はいずれも検討したが、[services.md](services.md)がedge-proxyを「ドメインロジックを持たない純粋なインフラ層、認可上の主体ではない」と最初から位置づけていることを踏まえ、計装自体を撤去する方針にした。CDN/APIゲートウェイの背後にあるオリジンサーバーが直接`user`から呼ばれたように見えるのは、edge-proxyを透過的なインフラとして扱えば実態として正しい。結果、`nginx:*-alpine-otel`イメージや専用の`nginx-main.conf`（`otel_exporter`はhttpコンテキストにしか書けないため分離が必要だった）も不要になり構成がシンプルに戻った
+
+### Rust: `reqwest-tracing`クレートは本リポジトリの依存バージョンと両立しない
+
+Warehouse Serviceの発信HTTP呼び出し（Keycloakへのtoken exchange、employee-serviceへの照会）とRedis呼び出しにCLIENTスパンが無く、Service Graph上でエッジが欠落していた問題への対応中に判明。
+
+- `reqwest-tracing`は`opentelemetry`のバージョンごとにフィーチャーフラグでpackageを切り替える方式だが、**このリポジトリが使う`opentelemetry 0.32`系に対応するバージョン（0.7.x）は`reqwest 0.13`を要求する**。本リポジトリは`opentelemetry-otlp`のreqwestクライアント機能がreqwest 0.13必須（rustls統合がaws-lc-rs必須＝cmakeが要る）であることを理由に、`hyper-client`機能へ切り替えてreqwestを0.12に留めた経緯がある（下記「既存の罠」参照）。一方、reqwest 0.12と両立する`reqwest-tracing`（0.5.x系）は`opentelemetry 0.26`までしか対応しておらず、`axum-tracing-opentelemetry 0.39`（本リポジトリの受信側計装）が`opentelemetry 0.32`/`tracing-opentelemetry 0.33`を厳密に要求するため、どちらを立てても他方が壊れる板挟みになる
+- 対応：`reqwest-tracing`crateは使わず、`tracing::info_span!`で`"otel.kind" = "client"`フィールド（`tracing-opentelemetry`が特別扱いする予約フィールド名）を持つスパンを手動生成し、`.instrument()`で発信呼び出しを包む形にした。ヘッダへの`traceparent`注入はもともと`opentelemetry_http::HeaderInjector` + `global::get_text_map_propagator`で自前実装済みだったので、スパンで包むだけで済んだ
+- Redis呼び出しも同様に対応（`redis`クレートにはこの種の計装ライブラリが存在しない）。`db.system`/`db.name`の semantic conventions属性を付けたスパンで手動計装
+- **副産物として見つかった実バグ**：`token_exchange.rs`のKeycloakへの呼び出しは、CLIENTスパンが無いだけでなく`traceparent`ヘッダの注入自体を一切行っていなかった（employee-serviceへの呼び出しは注入していたのに、Keycloakへの呼び出しは漏れていた）。Service Graphのエッジ欠落を追っている過程で発見し、あわせて修正した
+
+### Keycloakの`--tracing-enabled`/`--health-enabled`はビルド時に焼き込んでも無意味
+
+Keycloak公式ドキュメントは両オプションを「ビルド時オプション」と説明しており、当初`keycloak/Dockerfile`に`RUN kc.sh build --tracing-enabled=true --health-enabled=true`を追加したが、`--health-enabled`の効果が実機で全く確認できなかった（`/health`は404、managementポート`9000`もリッスンしない）。
+
+- 実機検証で判明：`start-dev`（Keycloakのdevモード起動コマンド）は**コンテナ起動のたびに暗黙の再ビルド（augmentation）を行い**、その際に使われるビルドオプションはDockerfileで焼き込んだ値ではなく、その時点のCLI引数/環境変数から再計算される。つまりdevモードで動かす限り、Dockerfileでのビルド時焼き込みには何の意味もない
+- 対応：`RUN kc.sh build ...`のステップを削除し、`KC_TRACING_ENABLED`/`KC_HEALTH_ENABLED`をcompose.ymlのランタイム環境変数として渡すだけにした（他サービスの`OTEL_SERVICE_NAME`と同じ扱いに統一）。プレーンな`quay.io/keycloak/keycloak:26.4`イメージ＋これらの環境変数だけで機能することを`docker run`単体でも確認済み
+
+### 既存の罠（Goのエンドポイント付与漏れ、Rustのランタイム/ログレベル問題など）
 
 - **Goの`otlptracehttp.WithEndpointURL`は`/v1/traces`を自動付与しない**：`WithEndpoint`（ホスト:ポートのみ渡す版）は補完するが、`WithEndpointURL`はURLをそのまま使うため、ベースURLを渡すと`http://otel-lgtm:4318/`宛に送られ404になる。パスは呼び出し側で明示的に付与する必要がある
-- **Rust: `opentelemetry-otlp`のreqwestクライアント機能はreqwest 0.13を要求し、0.13のrustls統合はaws-lc-rs必須（cmakeが要る）**：本リポジトリはmusl/alpineビルドでcmakeを避けたい（reqwestのTLSバックエンドを以前OpenSSL不在の理由でrustls-tlsへ切替済み、§既出）。`opentelemetry-otlp`の`hyper-client`機能（`opentelemetry-http`のhyperベースクライアント、reqwest非依存）を使うことで、アプリ自身のreqwestは0.12+rustls-tls（ring、cmake不要）のまま維持できる
+- **Rust: `opentelemetry-otlp`のreqwestクライアント機能はreqwest 0.13を要求し、0.13のrustls統合はaws-lc-rs必須（cmakeが要る）**：本リポジトリはmusl/alpineビルドでcmakeを避けたい（reqwestのTLSバックエンドを以前OpenSSL不在の理由でrustls-tlsへ切替済み、§既出）。`opentelemetry-otlp`の`hyper-client`機能（`opentelemetry-http`のhyperベースクライアント、reqwest非依存）を使うことで、アプリ自身のreqwestは0.12+rustls-tls（ring、cmake不要）のまま維持できる。この「reqwestを0.12に留める」制約が、上記の`reqwest-tracing`crateを使えない直接の原因になっている
 - **Rust: `axum-tracing-opentelemetry`はデフォルトでTRACEレベルのスパンを生成する**（target `otel::tracing`）。Dockerfileの`RUST_LOG=info`と噛み合わず全リクエストのスパンが実際には作られず`SpanDisabled`警告が出続ける。`axum-tracing-opentelemetry`の`tracing_level_info`フィーチャーでINFOレベルに変更して解決
 - **Rust: hyperベースのOTLPエクスポーターは非同期ランタイム上で動く必要がある**が、`SdkTracerProvider::builder().with_batch_exporter(...)`のデフォルトはTokioに紐付かない別OSスレッドでエクスポートするため`no reactor running`でパニックする。`opentelemetry_sdk`の`rt-tokio` + `experimental_trace_batch_span_processor_with_async_runtime`フィーチャーで`span_processor_with_async_runtime::BatchSpanProcessor::builder(exporter, runtime::Tokio)`を使うことで解決
 - **`grafana/otel-lgtm`イメージには`wget`が無く`curl`のみ**：他サービスのヘルスチェックをコピーした`wget`ベースの定義をそのまま使うと常に失敗する

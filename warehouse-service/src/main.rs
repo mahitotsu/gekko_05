@@ -106,12 +106,18 @@ async fn main() {
         .with_state(state);
 
     let app = Router::new()
-        .route("/health", get(|| async { "ok" }))
         .merge(protected)
         // OtelAxumLayer (outermost) starts a span per request and adopts any incoming
         // W3C traceparent as its parent; OtelInResponseLayer echoes the trace id back.
         .layer(OtelInResponseLayer::default())
-        .layer(OtelAxumLayer::default());
+        .layer(OtelAxumLayer::default())
+        // /health is added AFTER the otel layers, not merged in before them: axum's
+        // .layer() only wraps routes already present on the router at that point, so
+        // this route is deliberately left untraced -- otherwise the compose
+        // healthcheck (every 5s) would flood the service graph with a caller-less
+        // node. This ordering is the pattern documented by axum-tracing-opentelemetry
+        // itself for excluding a route from tracing.
+        .route("/health", get(|| async { "ok" }));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8083").await.unwrap();
     tracing::info!("warehouse-service listening on :8083");
