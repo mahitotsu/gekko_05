@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/XSAM/otelsql"
 	_ "github.com/go-sql-driver/mysql"
@@ -17,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func getenv(key, fallback string) string {
@@ -57,6 +60,59 @@ func initTracer(ctx context.Context) (func(context.Context) error, error) {
 	))
 
 	return tp.Shutdown, nil
+}
+
+// responseWriter captures the HTTP status code written by the handler.
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(status int) {
+	rw.status = status
+	rw.ResponseWriter.WriteHeader(status)
+}
+
+// accessLogMiddleware logs one JSON line per request with trace_id and sub.
+// Must be placed INSIDE otelhttp so r.Context() carries the active OTel span.
+func accessLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+
+		span := trace.SpanFromContext(r.Context())
+		traceID := "-"
+		if span.SpanContext().IsValid() {
+			traceID = span.SpanContext().TraceID().String()
+		}
+
+		entry := struct {
+			Type       string `json:"type"`
+			Method     string `json:"method"`
+			Path       string `json:"path"`
+			Status     int    `json:"status"`
+			DurationMs int64  `json:"duration_ms"`
+			Sub        string `json:"sub"`
+			Jti        string `json:"jti"`
+			TraceID    string `json:"trace_id"`
+		}{
+			Type:       "access_log",
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			Status:     rw.status,
+			DurationMs: time.Since(start).Milliseconds(),
+			Sub:        r.Header.Get("X-Subject"),
+			Jti:        r.Header.Get("X-Jti"),
+			TraceID:    traceID,
+		}
+		line, _ := json.Marshal(entry)
+		os.Stdout.Write(append(line, '\n'))
+	})
 }
 
 func main() {
@@ -114,9 +170,10 @@ func main() {
 		authMiddleware(keyfunc, keycloakIssuer, []string{"warehouse-viewer", "warehouse-viewer-all"}, handlers.getWarehouseStock))
 
 	log.Println("inventory-service listening on :8082")
-	// WithFilter skips span creation for the compose healthcheck's GET /health (hit
-	// every 5s) -- otherwise it floods the service graph with a caller-less node.
-	otelHandler := otelhttp.NewHandler(mux, "inventory-service", otelhttp.WithFilter(func(r *http.Request) bool {
+	// accessLogMiddleware is placed inside otelhttp so r.Context() carries the active
+	// OTel span, enabling trace_id extraction. WithFilter still excludes /health from
+	// span creation; accessLogMiddleware also skips /health logging for the same reason.
+	otelHandler := otelhttp.NewHandler(accessLogMiddleware(mux), "inventory-service", otelhttp.WithFilter(func(r *http.Request) bool {
 		return r.URL.Path != "/health"
 	}))
 	log.Fatal(http.ListenAndServe(":8082", otelHandler))

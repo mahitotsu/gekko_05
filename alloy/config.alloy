@@ -1,0 +1,36 @@
+// Discover all running Docker containers.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Relabel container metadata into Loki stream labels.
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Use the compose service name (e.g. "order-service") as the primary label.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Strip the leading slash from the container name.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+// Tail logs from all discovered containers and forward to Loki.
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.lgtm.receiver]
+}
+
+// Push to Loki inside otel-lgtm (port 3100, internal network only).
+loki.write "lgtm" {
+  endpoint {
+    url = "http://otel-lgtm:3100/loki/api/v1/push"
+  }
+}

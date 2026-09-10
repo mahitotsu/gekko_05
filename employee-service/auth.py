@@ -40,6 +40,8 @@ def get_claims(request: Request) -> dict:
         raise HTTPException(status_code=401, detail=f"invalid token: {e}")
 
     validate_dpop(request, claims, token)
+    request.state.sub = claims.get("sub", "-")
+    request.state.jti = claims.get("jti", "-")
     return claims
 
 

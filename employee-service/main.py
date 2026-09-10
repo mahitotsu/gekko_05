@@ -1,6 +1,9 @@
+import json
 import os
+import time
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from opentelemetry import trace
 from pymongo import MongoClient
 
 from auth import AuthContext, get_claims, has_role
@@ -11,6 +14,32 @@ def getenv(key: str, fallback: str) -> str:
 
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    start = time.monotonic()
+    response = await call_next(request)
+    span_ctx = trace.get_current_span().get_span_context()
+    trace_id = format(span_ctx.trace_id, "032x") if span_ctx.is_valid else "-"
+    sub = getattr(request.state, "sub", "-")
+    jti = getattr(request.state, "jti", "-")
+    # print(), not logging.getLogger(): a fresh logger with no handler/level
+    # configured silently drops .info() calls (verified: produces zero output).
+    # Other services (Go/Rust/TS) all write access logs straight to stdout too.
+    print(json.dumps({
+        "type": "access_log",
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "duration_ms": int((time.monotonic() - start) * 1000),
+        "sub": sub,
+        "jti": jti,
+        "trace_id": trace_id,
+    }), flush=True)
+    return response
 
 
 @app.on_event("startup")

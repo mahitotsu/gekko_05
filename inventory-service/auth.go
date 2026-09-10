@@ -134,12 +134,19 @@ func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, 
 			return
 		}
 
+		// Set before the role check: the token itself is valid at this point (a
+		// legitimate Token Exchange result), so the access log should still record
+		// sub/jti even when the request is denied for insufficient role -- otherwise
+		// a 403 here would be indistinguishable from a bypassed/absent token in the
+		// audit's jti-based checks.
+		r.Header.Set("X-Subject", subjectFrom(claims))
+		r.Header.Set("X-Jti", jtiFrom(claims))
+
 		if !hasAnyRole(claims, requiredRoles) {
 			http.Error(w, "insufficient role", http.StatusForbidden)
 			return
 		}
 
-		r.Header.Set("X-Subject", subjectFrom(claims))
 		next(w, r)
 	}
 }
@@ -164,6 +171,14 @@ func hasAnyRole(claims jwt.MapClaims, required []string) bool {
 func subjectFrom(claims jwt.MapClaims) string {
 	sub, _ := claims["sub"].(string)
 	return sub
+}
+
+func jtiFrom(claims jwt.MapClaims) string {
+	jti, _ := claims["jti"].(string)
+	if jti == "" {
+		return "-"
+	}
+	return jti
 }
 
 func errString(err error) string {

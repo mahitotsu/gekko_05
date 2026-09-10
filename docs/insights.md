@@ -139,6 +139,122 @@ targetは`otel::tracing`。Dockerfileの`RUST_LOG=info`と噛み合わず全リ�
 - Dockerfileでの「ダミーmain.rsで依存だけ先にビルド」は、BuildKitのcache mountと組み合わさるとcargoが実ソースの変更を検知せず古いバイナリを使い続けるという実害のある罠だった（cache mountはビルド間で永続化するのでこのトリック自体が不要）
 - axum 0.7のパスパラメータ記法は`{param}`ではなく`:param`（`{}`はaxum 0.8以降の記法で、0.7では静かに404になる——パニックしないため気づきにくい）
 
+## ログ収集・構造化（Alloy + Loki）
+
+### Spring Securityのフィルタチェーンで拒否された401はHandlerInterceptorに届かない（既知の限界）
+
+`AccessLogInterceptor`はSpring MVCの`HandlerInterceptor`として実装した。これは`DispatcherServlet`の内側で呼ばれるため、`BearerTokenAuthenticationFilter`（Spring Securityのフィルタチェーン、DispatcherServletより前段）がトークン欠如・無効を理由に401を返すケースでは`afterCompletion`自体が呼ばれず、アクセスログに記録されない。
+
+- 検討した代替案：`OncePerRequestFilter`でチェーン全体をtry/finallyで包む方式。しかしSpring Securityの`SecurityContextHolderFilter`はチェーン完了後の**自分自身のfinallyブロックでSecurityContextをクリアする**ため、それより外側に置いた自作フィルタのfinallyブロックが実行される時点では既にコンテキストが失われている可能性がある。`HandlerInterceptor`はDispatcherServletの内側（Spring Securityのフィルタ実行が完了した後）で動くため、`afterCompletion`時点でも`SecurityContextHolder`が読める
+- 結果として、order-serviceの401（未認証）はアプリ側アクセスログでは追えず、**Keycloak側のイベントログ（`LOGIN_ERROR`等）でのみ捕捉される**。監査用途でこの2つのログソースを併用する設計はこのギャップを前提にしている。`@PreAuthorize`起因の403（メソッドレベル認可、DispatcherServlet内側で評価）はHandlerInterceptorが捕捉できるため、この限界は「認証切れ／トークン無効」の401にのみ当てはまる
+
+### サンプリング率を下げた状態での動作は未検証
+
+「トレースはサンプリングされるため監査の裏付けには使えない、ログを裏付けにする」という設計判断は、trace_idがサンプリング判定（sampled=true/false）に関わらずログへ伝播することを前提にしている。Keycloakのイベントログで`sampled=true`のケースは確認したが、**実際にサンプリング率を1.0未満に下げて`sampled=false`のリクエストでもtrace_idがKeycloak/各サービスのログに残ることは検証していない**。order-serviceは`management.tracing.sampling.probability: 1.0`を明示しているが、Go/Rust/Node/PythonはOTel SDKのデフォルト（実質常時サンプリング）のままで、他の値を試したことがない。この前提の実証はバックログ「監査突合のデモ手順の確立」に含めるべき検証項目。
+
+### KeycloakのイベントログにはデフォルトでtraceIdが付与される
+
+Keycloakはjboss-loggingイベントリスナーをデフォルト有効にしており、`KC_TRACING_ENABLED=true`の環境下では`org.keycloak.events`ロガーが出力する各イベントログ行に`traceId=…`フィールドが自動付与される（出力例：`type="LOGIN_ERROR", realmName=…, traceId=50c1168a…`）。つまり、各サービスのToken Exchangeリクエストに`traceparent`ヘッダが付与されていれば、**KeycloakのイベントログとOTelトレースをtrace_idで機械的に突合できる**。バックログに「より進んだアプローチ」として記載していた内容が、追加実装なしに既に実現していた。
+
+### tracing-subscriberのJSONフォーマットはフィールドを"fields"の下にネストする
+
+Rustの`tracing_subscriber::fmt::layer().json()`は構造化フィールドを以下のようにネストする：
+
+```json
+{"timestamp":"…","level":"INFO","fields":{"message":"","type":"access_log","method":"GET",…}}
+```
+
+これはLokiの`| json | type = "access_log"`（トップレベルフィールドのフィルタ）で引っかからないため、他サービス（フラットJSONを出力するJava/Go/Node）との横断LogQLクエリが壊れる。アクセスログのように「他サービスと突合する目的」のJSON行は、`tracing::info!`を経由せず`serde_json::json!(…)`を直接`println!`で出力してフラットな構造を維持すること。
+
+### GoのaccessLogMiddlewareはotelhttp.NewHandlerの内側に置く
+
+`otelhttp.NewHandler`は受信リクエストの`traceparent`を抽出してスパンを開始し、**新しいcontextを持つ`*http.Request`**（`r.WithContext(newCtx)`）を内側のハンドラに渡す。外側でラップする実装（`accessLogMiddleware(otelhttp.NewHandler(mux, …))`）だと、`r.Context()`にはまだスパンが入っておらず`trace.SpanFromContext(r.Context())`が無効スパンを返す。
+
+正しい順序は`otelhttp.NewHandler(accessLogMiddleware(mux), …)`。この形にすることでaccessLogMiddlewareが受け取る`r`はotelhttp製の新しいcontextを持ち、`trace.SpanFromContext(r.Context())`で有効なtrace_idが取れる。
+
+### Spring BootのLogstash形式はtraceIdをcamelCaseで出力する
+
+micrometer-tracing-bridge-otelはMDCに`traceId`（camelCase）という名前でtrace IDを保存し、Spring BootのLogstash構造化ログ形式はMDCキーをそのままJSON上のフィールド名として使う。他サービス（Go/Rust/Node）はすべて`trace_id`（snake_case）を使っているため、`addKeyValue("trace_id", MDC.get("traceId"))`を明示的に追加して命名を揃えること。
+
+### AxumのアクセスログミドルウェアはJWT検証ミドルウェアの内側（後）に置く
+
+`axum::Router`の`.layer()`は**最後に呼ばれたものが最外層**（リクエストを最初に処理）になる。アクセスログが`Extensions`に格納された`Claims`（`sub`）を読むには、JWT検証ミドルウェアより内側（後）に配置する必要がある：
+
+```rust
+.layer(middleware::from_fn(access_log_middleware))          // 内側：auth後にClaimsが読める
+.layer(middleware::from_fn_with_state(ctx, auth_middleware)) // 外側：最後のlayer = 最外層
+```
+
+### Rust: `opentelemetry::Context::span()`の戻り値を1行で`.span_context()`すると一時値ドロップでコンパイルエラー
+
+```rust
+let span_ctx = ctx.span().span_context();  // error[E0716]: temporary value dropped while borrowed
+```
+
+`ctx.span()`は所有権を持つ値（内部的には`Box<dyn Span>`相当）を返すため、その場で`.span_context()`を呼ぶと戻り値の参照より先に一時値が破棄される。変数に束縛して寿命を延ばす必要がある：
+
+```rust
+let span = ctx.span();
+let span_ctx = span.span_context();
+```
+
+### Rust: `tracing-subscriber`の`.json()`は`Cargo.toml`で`json`フィーチャーを明示しないと存在しない
+
+`tracing_subscriber = { version = "0.3", features = ["env-filter"] }`のままだと`tracing_subscriber::fmt::layer().json()`が「そのようなメソッドは無い」でコンパイルエラーになる。`features = ["env-filter", "json"]`が必要。
+
+### Node: OTelの`trace.getActiveSpan()`はイベントコールバックの境界を越えると失われうる
+
+`http.IncomingMessage`の`res.on('finish', …)`コールバック内で`trace.getActiveSpan()`を呼んでも、その時点でOTelのcontext（AsyncLocalStorage経由）が元のリクエスト処理と同じスコープにあるとは限らない。ミドルウェア本体（同期実行中、OTelのcontextがまだ有効な区間）でtrace_idを取得し、クロージャで`finish`コールバックに持ち込む必要がある：
+
+```typescript
+const traceId = trace.getActiveSpan()?.spanContext().traceId ?? "-"; // 同期区間で取得
+event.node.res.on("finish", () => { /* traceIdはクロージャ経由で使う、ここで取得し直さない */ });
+```
+
 ## Go実装（inventory-service）
 
 JWT検証は`golang-jwt/jwt/v5` + JWKSを手動パースで自前実装した（`keyfunc/v3`はGo 1.25+要求で依存が重いため不採用）。
+
+## 監査ログ・トークン監査（audit/）
+
+トークン発行と利用の突合監査（`audit/audit.py`、`audit/scenario.py`）を実装する過程で、実機検証なしには気づけなかった罠が複数見つかった。いずれも「コードは正しく見えるが実際には動かない/前提が崩れている」パターン。
+
+### Keycloakの`eventsEnabled`はデフォルト`false`：LOGIN/TOKEN_EXCHANGEの成功イベントは最初から一切記録されない
+
+`backlog.md`には以前から「Keycloakのイベントログには`traceId`が自動付与され突合できる」という記載があったが、これは未検証の思い込みだった。実際に`GET /admin/realms/{realm}/events/config`で確認すると`eventsEnabled: false`で、`eventsListeners: ["jboss-logging"]`は登録されているものの無効化されていた。この状態では成功系イベント（LOGIN, TOKEN_EXCHANGE等）は`eventsListeners`へ一切ディスパッチされない。
+
+紛らわしいのは、DPoP proof欠落等の認証エラー（`LOGIN_ERROR`）は`eventsEnabled`に関係なく別経路でWARNログに出ていたため、「イベントログ自体は機能している」という誤った確信を持ちやすかった点（実際に本セッションもこれで一度誤判定した）。
+
+対応：`keycloak/realm-export.json`のトップレベルに`"eventsEnabled": true, "eventsListeners": ["jboss-logging"]`を追加。**この変更はDockerfileの`COPY realm-export.json ...`でイメージに焼き込まれるため、`docker compose build keycloak`でイメージを再ビルドしないと反映されない**（`docker compose up -d keycloak`だけではコンテナは再作成されるが古いイメージのまま）。
+
+### jboss-logging event listenerの成功イベントはデフォルトでDEBUGレベル：`eventsEnabled: true`だけでは足りない
+
+`eventsEnabled`を有効化してもなお、LOGIN/TOKEN_EXCHANGEの成功イベントがログに出ない状態が続いた。原因は`JBossLoggingEventListenerProvider`の成功イベントのデフォルトログレベルがDEBUGであること（エラーイベントはWARNがデフォルトで、これは最初から見えていた）。ルートのログレベルがINFOのため、DEBUG出力は素通りしていた。
+
+対応：`compose.yml`のkeycloakサービスに`KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: "info"`を追加（他のKC_*ランタイム設定と同じ扱い）。実機で確認：追加前は`docker logs`に成功イベントが1行も出ず、追加後は`type="LOGIN"`/`type="TOKEN_EXCHANGE"`が確認できた。
+
+### Python: `logging.getLogger(name).info(...)`はハンドラ未設定だと無音で何も出力しない
+
+employee-serviceのアクセスログ実装で`logging.getLogger("access")`にハンドラ・レベルを一切設定せず`.info()`を呼んでいたところ、実機で`docker exec`から直接検証するまで気づかなかったが、**何も出力されない**（例外も出ない）。ルートロガーのデフォルトレベルはWARNINGで、ハンドラも無い状態だと`.info()`呼び出しは完全に無音になる。uvicornは自分の`uvicorn`/`uvicorn.access`ロガーは設定するが、アプリが独自に作った名前のロガーまでは設定しない。
+
+対応：他サービス（Go/Rust/TypeScript）と同じく`print(..., flush=True)`で標準出力に直接書く方式に統一した。Dockerがstdoutをパイプとして扱うため`flush=True`が無いとブロックバッファリングで出力が遅延する点にも注意。
+
+### 認可ミドルウェアは「クレーム抽出・記録」を「許可/拒否判定」より前に置く：エラーハンドリングの分岐が監査証跡を消しうる
+
+Go実装（inventory-service）の`authMiddleware`で、`hasAnyRole`チェックが403を返す`return`分岐が`r.Header.Set("X-Subject", ...)` / `r.Header.Set("X-Jti", ...)`より**前**にあった。トークン自体は正当にToken Exchangeされたものでも、ロール不足で拒否される経路を通ると、アクセスログに`sub="-"`/`jti="-"`が記録される（＝「誰が」「どのトークンで」拒否されたかの証跡が消える）。Java/Rust/Pythonの3サービスは実装の都合で偶然この順序になっていなかっただけで、意図して設計されていたわけではない。
+
+一般化すると：**認可判定（許可/拒否のロジック）で早期returnするコードパスを書くときは、「誰が・どのトークンで」を記録する処理が、その早期returnより先に実行されているかを必ず確認する。** 「許可された場合だけ記録すればよい」という発想でクレーム抽出とログ記録を許可判定の後ろに置くと、拒否された（＝監査上最も見たいはずの）リクエストの証跡が丸ごと欠落する。これは認可ロジックを持つ全サービス・全エンドポイントで再発しうるクラスの罠であり、今回はGoの1箇所だけ実害があったが、他言語・他サービスへの機能追加時にも同じ順序を意識する必要がある。
+
+対応：ヘッダー設定（クレーム記録）をロールチェックより前に移動。実機で確認：修正前は403時に`sub`/`jti`とも`"-"`、修正後は正しい値が記録される。
+
+### `docker compose down`はサービス名を指定しても全体を止める：ワンショットコンテナの掃除には`docker rm`を使う
+
+`audit`/`scenario`のような`docker compose run --rm`のワンショットコンテナはオーファンを残さない（`--rm`で自動削除される）はずだが、途中終了などで残った場合に`docker compose --profile audit down --remove-orphans`を実行すると、**プロファイル配下だけでなくスタック全体（keycloak, otel-lgtm等含む）が停止・削除される**。個別コンテナの掃除には`docker ps -aq --filter "name=..."  | xargs -r docker rm -f`のような対象を絞った削除を使うべき（`Makefile`の`audit-clean`ターゲットもこの方式）。
+
+### 監査ツールの「証跡を省く」表示ロジックは、まさに異常検知時にその証跡自体を隠しうる
+
+`audit.py`のCHECK2で、trace_idごとの対応状況を`show_evidence(..., max_rows=30)`で表示していたが、これは時系列順に先頭30行を表示するだけの実装だった。件数が多い状況で実際に不整合（`✗`）が発生すると、その`✗`行が30行の外側（省略対象）に落ちてしまい、**「異常あり」という判定は出るのに、その根拠行が画面に出ない**という状態になっていた。実機で「該当データが31件以上ある状態でCHECK2が✗になる」ケースを作って初めて発覚した（静的レビューでは`max_rows=30`という値の妥当性まで疑わなかった）。
+
+対応：`✗`（未対応）の行は件数に関わらず必ず全件表示し、省略の対象は`✓`（対応確認済み）側のみに限定した。一般化すると、**監査・異常検知系の出力で「表示件数を制限する」実装をする場合、正常系と異常系を区別せず先頭N件で切ると、まさに見せたい異常系の証跡が省略される事故が起きる**。表示制限は常に「正常系のみ」に適用し、異常系は無条件に全件出すべき。
+
+**さらに設計を見直した**：そもそも生ログの全件（または一部）をレポート本文に埋め込む発想自体が誤りだった。クエリの実行内容・取得件数は`docker compose run`の標準出力（実行ログ）に流れるので十分に追跡可能であり、レポートの「判定」部分に生ログの一覧を埋め込む必要はない。埋め込んでも上記のように省略されて結局使い物にならない。最終的に、レポートは各CHECKについて「判定サマリ（件数）」＋「違反時のみ、識別子（trace_id/jti/sub）と最小限の文脈」に絞り、実行ログ（クエリ・件数）とレポート（判定結果）を明確に分離した。監査ツールの出力は「何を確認したか（実行ログ）」と「結果どうだったか（レポート）」を混ぜないほうが、どちらも本来の役目を果たせる。

@@ -10,6 +10,7 @@ services:
     # Purely informational: no ports: mapping, so nothing is published to the host.
     expose:
       - "3000"
+      - "3100"
       - "4317"
       - "4318"
     environment:
@@ -24,6 +25,16 @@ services:
       timeout: 5s
       retries: 24
       start_period: 15s
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: run /etc/alloy/config.alloy
+    depends_on:
+      otel-lgtm:
+        condition: service_healthy
 
   keycloak:
     build: ./keycloak

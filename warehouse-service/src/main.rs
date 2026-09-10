@@ -2,7 +2,8 @@ mod auth;
 mod handlers;
 mod token_exchange;
 
-use axum::{middleware, routing::{get, post}, Router};
+use axum::{extract::Request, middleware, middleware::Next, response::Response, routing::{get, post}, Router};
+use serde_json::json;
 use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
@@ -25,6 +26,49 @@ fn getenv(key: &str, fallback: &str) -> String {
 /// with `service.name`, W3C traceparent propagation, and a `tracing` subscriber whose
 /// spans are bridged to OTel. Returns the provider so the caller keeps it alive for the
 /// process lifetime (dropping it flushes and shuts down the exporter).
+fn current_trace_id() -> String {
+    use opentelemetry::trace::TraceContextExt;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    let ctx = tracing::Span::current().context();
+    let span = ctx.span();
+    let span_ctx = span.span_context();
+    if span_ctx.is_valid() {
+        span_ctx.trace_id().to_string()
+    } else {
+        "-".to_string()
+    }
+}
+
+async fn access_log_middleware(request: Request, next: Next) -> Response {
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+    let (sub, jti) = request
+        .extensions()
+        .get::<auth::Claims>()
+        .map(|c| (c.sub.clone(), c.jti.clone().unwrap_or_else(|| "-".to_string())))
+        .unwrap_or_else(|| ("-".to_string(), "-".to_string()));
+    let start = std::time::Instant::now();
+
+    let response = next.run(request).await;
+
+    // Write flat JSON directly to stdout so the structure matches other services
+    // (tracing's JSON format nests structured fields under "fields", breaking
+    // cross-service LogQL queries that filter by top-level type="access_log").
+    let entry = json!({
+        "type": "access_log",
+        "method": method,
+        "path": path,
+        "status": response.status().as_u16(),
+        "duration_ms": start.elapsed().as_millis(),
+        "sub": sub,
+        "jti": jti,
+        "trace_id": current_trace_id(),
+    });
+    println!("{}", entry);
+
+    response
+}
+
 fn init_telemetry(service_name: &str, otlp_endpoint: &str) -> SdkTracerProvider {
     // Propagator shared by the incoming-request middleware (extracts `traceparent`) and
     // the outgoing reqwest calls (inject `traceparent`), so traces connect across services.
@@ -57,13 +101,13 @@ fn init_telemetry(service_name: &str, otlp_endpoint: &str) -> SdkTracerProvider 
     let tracer = provider.tracer("warehouse-service");
     global::set_tracer_provider(provider.clone());
 
-    // Replaces env_logger: console output via fmt, OTel spans via the tracing bridge.
-    // RUST_LOG still controls verbosity through EnvFilter.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer())
+        // JSON format: structured fields in tracing events become JSON keys,
+        // and ANSI colour codes are absent (no terminal formatting in JSON mode).
+        .with(tracing_subscriber::fmt::layer().json())
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .init();
 
@@ -102,6 +146,9 @@ async fn main() {
     let protected = Router::new()
         .route("/warehouse/:branch/stock/:product_id", get(handlers::get_stock))
         .route("/warehouse/:branch/stock/:product_id/reserve", post(handlers::reserve_stock))
+        // Axum: last .layer() is outermost (runs first). auth runs first and inserts
+        // Claims into extensions; access_log runs second and reads those Claims.
+        .layer(middleware::from_fn(access_log_middleware))
         .layer(middleware::from_fn_with_state(auth_ctx, auth::auth_middleware))
         .with_state(state);
 
