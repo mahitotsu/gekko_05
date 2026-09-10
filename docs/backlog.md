@@ -10,6 +10,21 @@
 - **参照**：[use-cases.md](use-cases.md) UC4、[architecture.md](architecture.md) §9（Keycloak層のログ設計）、[insights.md](insights.md)「監査ログ・トークン監査」節
 - **前提**：アプリ層ABAC（permission-matrix.md 表2〜5）の実装が先行する
 
+## UC8/UC9における層の責務逆転
+
+Order Serviceの`WarehouseStockController`（[order-service/src/main/java/com/example/orderservice/WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)）が`warehouse-viewer`/`warehouse-viewer-all`ロールを直接チェックしている。これはWarehouse Service（[warehouse-service/src/handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`）が本来担うRBAC判定（permission-matrix.md 表5）の複製であり、UC4で確立した「支店別アクセス制御は上流の関心事ではない」という層分離の原則と矛盾する。
+
+- **問題**：Warehouse Serviceのロール名・判定ロジックをOrder Serviceが知っている必要があり、Warehouse Service側の権限体系が変わるとOrder Serviceも追随して変更しなければならない
+- **検討すべき代替案**：Order Serviceでの事前チェックをやめてチェーンの奥（Warehouse Service）でのみ判定する（ただし委任チェーンを最後まで走らせてから拒否するコストとのトレードオフ）、またはOrder Serviceの事前チェックを「フェイルファストの最適化」として明示し本来の権威はWarehouse Service側にあることをコメント等で明記する
+- **参照**：[use-cases.md](use-cases.md) UC8/UC9、[permission-matrix.md](permission-matrix.md) 表5
+
+## TTL設定の実機検証
+
+architecture.md §11「サービス間の中継トークンはTTLを短く設定する」・§18「短TTLで緩和する」という記述に反し、`keycloak/realm-export.json`にはrealmレベル・クライアントレベルとも`accessTokenLifespan`の明示設定が存在しない。実際に効いているのはKeycloakデフォルト（5分）であり、「短く設定した」という主張は未検証。
+
+- **対応が必要な内容**：委任チェーン用のトークンに短いTTL（例: 数十秒〜1分程度）を明示設定するか、現状のデフォルト値のままで許容するかを決定し、§11・§18の記述を実態に合わせる
+- **参照**：[architecture.md](architecture.md) §11・§18
+
 ## WebUIの見た目の改善
 
 現状の`frontend/app/app.vue`は受注登録フォーム・受注一覧・社員情報照会のみの最小限の実装。スタイリング・レイアウトの改善。

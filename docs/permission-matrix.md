@@ -22,7 +22,7 @@ architecture.md §9-§13で決めた認可設計を、条件と結果が漏れ�
   - X-service→frontend：frontendを対象にするaudienceマッパーが存在しないため`Requested audience not available: frontend`
 - ALLOWの5マスはすべて `optionalClientScopes` の割当のみで実現している（architecture.md §12）。Client Policiesは使っていない
 
-## 表2: Order Serviceの操作可否（アプリ層・未実装）
+## 表2: Order Serviceの操作可否（アプリ層・実装済み）
 
 条件は「ユーザーのロール」と「操作種別」の2軸。
 
@@ -32,9 +32,9 @@ architecture.md §9-§13で決めた認可設計を、条件と結果が漏れ�
 | order-reader | DENY | ALLOW |
 | その他 | DENY | DENY |
 
-Order Service実装時に、この4行×2列＝8ケースをテストする。
+実装：[OrderController.java](../order-service/src/main/java/com/example/orderservice/OrderController.java)の`@PreAuthorize`。この4行×2列＝8ケースに対応する自動テストは未整備（拒否系はpermission-matrix.sh・e2eのいずれにも含まれない）。
 
-## 表3: Inventory Serviceの操作可否（アプリ層・未実装）
+## 表3: Inventory Serviceの操作可否（アプリ層・実装済み）
 
 条件は「ユーザーのロール」と「操作種別」の2軸。Inventory Serviceはfrontendから直接呼ばれず、Order Service経由の委任チェーンでのみ到達する（表1）が、`sub`とロールクレームはそのチェーンを通じて維持される（検証済み）ため、Inventory Service自身がこの表で判定できる。
 
@@ -44,9 +44,9 @@ Order Service実装時に、この4行×2列＝8ケースをテストする。
 | inventory-reader | DENY | ALLOW |
 | その他 | DENY | DENY |
 
-Inventory Service実装時に、この3行×2列＝6ケースをテストする。
+実装：[auth.go](../inventory-service/auth.go)の`hasAnyRole`。この3行×2列＝6ケースに対応する自動テストは未整備。
 
-## 表4: Employee Serviceの照会可否（アプリ層・未実装）
+## 表4: Employee Serviceの照会可否（アプリ層・実装済み）
 
 条件は「ユーザーのロール」と「操作種別」の2軸。
 
@@ -55,9 +55,9 @@ Inventory Service実装時に、この3行×2列＝6ケースをテストする�
 | hr-viewer | ALLOW | ALLOW |
 | その他 | ALLOW | DENY |
 
-Employee Service実装時に、この2行×2列＝4ケースをテストする。委任チェーン経由（warehouse-service→employee-service）で渡されるトークンは常に`sub`=元ユーザーなので、経路上は必ず「照会対象=自分」の行に該当する。
+実装：[main.py](../employee-service/main.py)の`is_self`/`hr-viewer`判定。委任チェーン経由（warehouse-service→employee-service）で渡されるトークンは常に`sub`=元ユーザーなので、経路上は必ず「照会対象=自分」の行に該当する。この2行×2列＝4ケースに対応する自動テストは未整備。
 
-## 表5: Warehouse Serviceの支店別照会可否（アプリ層・未実装、RBAC+ABACの組み合わせ）
+## 表5: Warehouse Serviceの支店別照会可否（アプリ層・実装済み、RBAC+ABACの組み合わせ）
 
 Inventory Serviceとの違いを明確にするため、Warehouse Serviceは2段階の判定にする。
 
@@ -72,7 +72,9 @@ Inventory Serviceとの違いを明確にするため、Warehouse Serviceは2段
 | warehouse-viewer | ALLOW | DENY |
 | その他 | DENY | DENY |
 
-Employee Service・Warehouse Service実装時に、この3行×2列＝6ケースをテストする。支店が増えても列（一致/不一致）は変わらない。
+実装：[handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`。支店が増えても列（一致/不一致）は変わらない。この3行×2列＝6ケースに対応する自動テストは未整備。
+
+Order Serviceの`WarehouseStockController`（UC8/UC9）も`warehouse-viewer`/`warehouse-viewer-all`のロールチェックを行っているが、これはWarehouse Serviceの本表と同じロールをOrder Service側でも判定している状態であり、層の責務分離としては課題が残る（[backlog.md](backlog.md)参照）。
 
 ## テストユーザー
 

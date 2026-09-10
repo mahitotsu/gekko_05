@@ -151,6 +151,7 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - 各言語のOTel SDKはHTTPクライアント/サーバーの自動計装を持つため、独自ログ項目を設計するより実装コストが低い
 - 可視化用に **`grafana/otel-lgtm`**（Grafana+Tempo+Loki+Prometheus/Mimirが1コンテナに統合された公式イメージ）を docker-compose に追加する。OTLPエンドポイントが1つで完結し設定不要。今回使うのはトレース（Tempo経由）のみで、メトリクス計装やダッシュボード構築は行わない（ログ・メトリクスの活用は[backlog.md](backlog.md)）
 - 実装範囲・各言語の計装方式・見つかった罠は[insights.md](insights.md)を参照。edge-proxy（nginx）は意図的に計装しない（同ドキュメント参照）
+- トークン発行・利用記録とアクセスログを`trace_id`で突合する監査ツールを`audit/`に実装済み。デモ手順と実行結果は[audit-demo.md](audit-demo.md)を参照
 
 **根拠**：
 - 自己申告ヘッダ（例: `X-Delegation-Chain`）は署名も検証もされず認可判断の根拠にできない
