@@ -2,7 +2,11 @@
 
 具体的な業務シナリオごとに、どのサービスがどう連携して実現するかを示す。各サービスの役割は`services.md`、認可判定の詳細は`permission-matrix.md`を参照。
 
-## UC1: 受注登録（正常系、実際に在庫を引き当てるため3ホップ全てを通る）
+業務シナリオ単位でグルーピングし、それぞれ正常系・異常系を示す。異常系は「どのように拒否が観測されるか」も明記する（同じ「拒否」でも、リクエスト自体がエラーになる場合と、処理は完了しつつ業務結果として不成立になる場合があり、両者は区別される）。
+
+## 受注登録
+
+### UC1: 正常系（実際に在庫を引き当てるため3ホップ全てを通る）
 
 登場人物：yamada-sales（`order-writer`, `inventory-writer`, `warehouse-viewer`, 所属支店=東京）
 
@@ -20,7 +24,34 @@
 11. Order Service: 引当成功 → 受注をCONFIRMEDで登録
 ```
 
-## UC2: 受注照会（正常系、集計在庫の確認のみでWarehouse Serviceへは到達しない）
+### UC3: 異常系・権限不足（受注登録の拒否）
+
+登場人物：suzuki-support（`order-writer`を持たない）
+
+```
+1. suzuki-support が frontend から受注登録を試みる
+2. Order Service: order-writer ロールがない → 拒否（permission-matrix.md 表2）
+3. Token Exchangeのチェーンは開始されない
+```
+
+**拒否の見え方**：Order Serviceの`@PreAuthorize`がリクエストの入口で拒否するため、HTTPエラー（403）がそのままfrontend（BFF）まで伝播する。受注は作成されず、注文一覧にも何も追加されない。
+
+### UC4: 異常系・支店不一致（他拠点在庫への引当拒否）
+
+登場人物：yamada-sales（所属支店=東京）が大阪支店の実在庫が必要な商品を注文する場合
+
+```
+1〜8. UC1と同様にOrder Service→Inventory Service→Warehouse Service→Employee Serviceの委任が進む
+9. Warehouse Service: 照会対象支店（大阪）と所属支店（東京）が不一致 → 拒否（permission-matrix.md 表5）
+   （Inventory Serviceが持つ「商品は東京・大阪にある」という集計情報自体は誰でも見られるが、
+     大阪の実数値・引当はyamada-salesには開示されない）
+```
+
+**拒否の見え方**：UC3とは異なり、HTTPエラーにはならない。Inventory Serviceは意図的に、Warehouse Serviceからの権限拒否（403）と純粋な在庫不足（409）を区別せず同じ「引当できなかった」という結果として扱う（支店別アクセス制御はInventory Serviceの関心事ではないため、権限拒否の事実そのものを上流に漏らさない設計）。そのため受注自体は201 Createdで正常に作成され、`status=REJECTED`として注文一覧に載る。外形上は在庫不足による拒否と区別できない。
+
+## 受注照会
+
+### UC2: 正常系（集計在庫の確認のみでWarehouse Serviceへは到達しない）
 
 登場人物：suzuki-support（`order-reader`, `inventory-reader`。`warehouse-viewer`は持たない）
 
@@ -34,28 +65,9 @@
 
 suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実数値（Warehouse Serviceの管轄）そのものを必要としないため問題なく完結する。支店別の実引当が必要になるのはUC1（受注登録）のときだけ。
 
-## UC3: 受注登録の拒否（権限不足）
+## 社員情報照会
 
-登場人物：suzuki-support（`order-writer`を持たない）
-
-```
-1. suzuki-support が frontend から受注登録を試みる
-2. Order Service: order-writer ロールがない → 拒否（permission-matrix.md 表2）
-3. Token Exchangeのチェーンは開始されない
-```
-
-## UC4: 他拠点在庫の照会拒否
-
-登場人物：yamada-sales（所属支店=東京）が大阪支店の実在庫を照会しようとする場合
-
-```
-1〜8. UC1と同様にOrder Service→Inventory Service→Warehouse Service→Employee Serviceの委任が進む
-9. Warehouse Service: 照会対象支店（大阪）と所属支店（東京）が不一致 → 拒否（permission-matrix.md 表5）
-   （Inventory Serviceが持つ「商品Aは東京・大阪にある」という集計情報自体は誰でも見られるが、
-     大阪の実数値・引当はyamada-salesには開示されない）
-```
-
-## UC5: 自分の社員情報照会
+### UC5: 正常系・自分の社員情報照会
 
 登場人物：任意のユーザー（ロール不問）
 
@@ -65,7 +77,7 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 3. Employee Service: トークンのsub == 照会対象ID → 許可（permission-matrix.md 表4）
 ```
 
-## UC6: 他人の社員情報照会（HR）
+### UC6: 正常系・HRによる他人の社員情報照会
 
 登場人物：tanaka-hr（`hr-viewer`）
 
@@ -75,7 +87,7 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 3. Employee Service: トークンのsub != 照会対象IDだが、hr-viewerロールを保持 → 許可
 ```
 
-## UC7: 他人の社員情報照会の拒否
+### UC7: 異常系・一般ユーザーによる他人の社員情報照会拒否
 
 登場人物：yamada-sales（`hr-viewer`を持たない）
 
@@ -84,7 +96,11 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 2. Employee Service: トークンのsub != 照会対象ID かつ hr-viewerロールなし → 拒否
 ```
 
-## UC8: 全支店の在庫照会（物流管理）
+**拒否の見え方**：Employee ServiceがHTTPエラー（403）を返し、frontend（BFF）までそのまま伝播する。UC3と同じ「入口でのRBAC拒否」の形。
+
+## 全支店の在庫照会（物流管理）
+
+### UC8: 正常系
 
 登場人物：sato-logistics（`warehouse-viewer-all`）
 
@@ -94,3 +110,14 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 2. Warehouse Serviceへ到達するまでの経路はUC1と同様（Order Service→Inventory Service→Warehouse Service）
 3. Warehouse Service: sato-logisticsの所属支店が大阪でなくても、warehouse-viewer-allロールを保持 → 一致チェックを省略して許可（permission-matrix.md 表5）
 ```
+
+### UC9: 異常系・権限不足（新規、仕様のみ定義）
+
+登場人物：`warehouse-viewer-all`を持たない任意のユーザー（例: yamada-sales、suzuki-support）
+
+```
+1. ユーザーが物流管理向けの全支店在庫照会画面の利用を試みる
+2. Warehouse Service: warehouse-viewer-allロールを持たない（warehouse-viewerのみ、または無ロール）→ 拒否（permission-matrix.md 表5「その他」行）
+```
+
+**現状の位置づけ**：UC8の物流管理向け画面自体がfrontendに未実装のため（`docs/backlog.md`「UC8のWebUI導線」参照）、本ユースケースはブラウザ経由の実トラフィックで検証できない。ユースケースとしての仕様は実装状況に関わらずここで定義し、e2e自動化はWebUI導線の実装後に着手する。

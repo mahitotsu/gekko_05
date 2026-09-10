@@ -8,7 +8,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "e2e": "node e2e/login-and-order.mjs"
+    "e2e": "for f in e2e/uc*.mjs; do node \"$f\" || exit 1; done"
   },
   "dependencies": {
     "@opentelemetry/exporter-trace-otlp-proto": "^0.205.0",

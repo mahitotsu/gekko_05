@@ -14,5 +14,6 @@ done
 
 redis-cli SETNX stock:tokyo:product-A 100
 redis-cli SETNX stock:osaka:product-A 50
+redis-cli SETNX stock:osaka:product-C 50
 
 wait "$REDIS_PID"

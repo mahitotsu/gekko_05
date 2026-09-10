@@ -34,7 +34,10 @@ async function loadOrders() {
   try {
     orders.value = await $fetch<Order[]>("/api/orders");
   } catch (error: any) {
-    orderError.value = error?.data?.message ?? error?.statusMessage ?? "Failed to load orders";
+    // "||", not "??": Spring Security's default 403 body is empty, which flows through
+    // as data.message === "" -- a defined-but-falsy value that "??" would keep as-is,
+    // silently hiding the error (v-if="orderError" treats "" as falsy too).
+    orderError.value = error?.data?.message || error?.statusMessage || "Failed to load orders";
   }
 }
 
@@ -51,7 +54,7 @@ async function submitOrder() {
     newOrder.quantity = 1;
     await loadOrders();
   } catch (error: any) {
-    orderError.value = error?.data?.message ?? error?.statusMessage ?? "Failed to create order";
+    orderError.value = error?.data?.message || error?.statusMessage || "Failed to create order";
   }
 }
 
@@ -61,7 +64,7 @@ async function lookupEmployee() {
   try {
     employee.value = await $fetch<Employee>(`/api/employees/${employeeUsername.value}`);
   } catch (error: any) {
-    employeeError.value = error?.data?.message ?? error?.statusMessage ?? "Failed to look up employee";
+    employeeError.value = error?.data?.message || error?.statusMessage || "Failed to look up employee";
   }
 }
 
@@ -94,7 +97,7 @@ if (me.value?.loggedIn) {
         <button type="submit">注文する</button>
       </form>
       <p id="order-result">{{ lastOrderResult }}</p>
-      <p v-if="orderError" style="color: red;">{{ orderError }}</p>
+      <p v-if="orderError" id="order-error" style="color: red;">{{ orderError }}</p>
 
       <h3>注文一覧 <button @click="loadOrders">再読込</button></h3>
       <ul id="order-list">
@@ -111,7 +114,7 @@ if (me.value?.loggedIn) {
       <p id="employee-result" v-if="employee">
         {{ employee.username }} &mdash; {{ employee.department }} / {{ employee.branch }}
       </p>
-      <p v-if="employeeError" style="color: red;">{{ employeeError }}</p>
+      <p v-if="employeeError" id="employee-error" style="color: red;">{{ employeeError }}</p>
     </section>
   </main>
 </template>
