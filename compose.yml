@@ -291,3 +291,26 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+
+  # シナリオ実行: docker compose --profile audit run --rm scenario
+  scenario:
+    profiles: [audit]
+    build: ./audit
+    command: ["python3", "scenario.py"]
+    environment:
+      FRONTEND_URL: http://edge-proxy:3000
+    depends_on:
+      edge-proxy:
+        condition: service_healthy
+
+  # 監査実行: docker compose --profile audit run --rm audit
+  audit:
+    profiles: [audit]
+    build: ./audit
+    environment:
+      LOKI_URL: http://otel-lgtm:3100
+      # 監査対象期間（秒）。デフォルト 1 時間。
+      AUDIT_WINDOW_SECONDS: "3600"
+    depends_on:
+      otel-lgtm:
+        condition: service_healthy
