@@ -138,14 +138,17 @@ func (h *InventoryHandlers) reserveAtWarehouse(ctx context.Context, token, branc
 	}
 }
 
-// getWarehouseStock (UC8/UC9, docs/use-cases.md) is a passthrough for a specific
-// branch's real stock, used by the logistics all-branch inquiry screen. Unlike
-// reserveAtWarehouse, this is a read with no business-state outcome to hide behind, so
-// Warehouse Service's actual status/body (200 with the real quantity, or 403 for a
-// denied branch) is relayed as-is rather than collapsed into a generic result --
-// branch access denial should be visible here, not disguised.
+// getWarehouseStock (UC8/UC9, docs/use-cases.md) is a passthrough to Warehouse
+// Service's own branch-visibility-filtered stock lookup, used by the logistics
+// all-branch inquiry screen. It asks "what can this caller see", not "what's at branch
+// X" -- there is no branch in this request at all, only productID, so there is no
+// caller-chosen branch to be denied for; Warehouse Service returns exactly the set of
+// branches (possibly empty, possibly one, possibly all) the caller may see, and this
+// relays that response verbatim. The one exception is a 403 for holding neither
+// warehouse-viewer nor warehouse-viewer-all at all (not an ABAC/branch question, a
+// "this screen isn't for you" RBAC gate, same shape as UC3/UC7) -- relayed as-is too,
+// with no interpretation needed: architecture.md §20.
 func (h *InventoryHandlers) getWarehouseStock(w http.ResponseWriter, r *http.Request) {
-	branch := r.PathValue("branch")
 	productID := r.PathValue("productId")
 
 	rawToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -156,7 +159,7 @@ func (h *InventoryHandlers) getWarehouseStock(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	url := fmt.Sprintf("%s/warehouse/%s/stock/%s", h.warehouseBaseURL, branch, productID)
+	url := fmt.Sprintf("%s/warehouse/stock/%s", h.warehouseBaseURL, productID)
 	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

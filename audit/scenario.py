@@ -125,7 +125,7 @@ def main() -> None:
                 ("受注一覧取得",     "GET",  "/api/orders", {}),
                 ("受注作成",         "POST", "/api/orders",
                  {"json": {"customerId": "customer-1", "productId": "product-A", "quantity": 1}}),
-                ("在庫確認(自支店)", "GET",  "/api/warehouse-stock/tokyo/product-A", {}),
+                ("在庫確認(自支店)", "GET",  "/api/warehouse-stock/product-A", {}),
                 ("自身の社員情報",   "GET",  "/api/employees/yamada-sales", {}),
             ],
         ),

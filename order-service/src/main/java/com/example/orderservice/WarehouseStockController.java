@@ -2,7 +2,6 @@ package com.example.orderservice;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,10 +10,20 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * UC8/UC9 (docs/use-cases.md): the logistics all-branch inquiry screen. Gated by
- * warehouse-viewer(-all) rather than order-writer/order-reader -- sato-logistics
- * (warehouse-viewer-all) holds neither of the latter, so gating on those would deny
- * UC8's own正常系 persona at this entry point before the delegation chain even starts.
+ * UC8/UC9 (docs/use-cases.md): the logistics all-branch inquiry screen. Deliberately
+ * carries no @PreAuthorize: branch-level access (warehouse-viewer/-all, ABAC branch
+ * match) is not order-service's business (services.md declares its own feature set as
+ * just 受注登録/受注照会) -- it is Warehouse Service's alone (services.md: "組織的に独立
+ * した拠点システム"). order-service is forced to be this request's first hop only
+ * because the delegation topology gives frontend no other way to reach it (permission-
+ * matrix.md 表1), not because it has any authority to exercise here. Gating on
+ * order-writer/order-reader would be equally wrong (sato-logistics, UC8's persona,
+ * holds neither), and gating on warehouse-viewer(-all) -- what the previous version of
+ * this file did -- duplicates Warehouse Service's own RBAC and silently goes stale if
+ * that role vocabulary ever changes (docs/backlog.md, now resolved; see
+ * architecture.md §20). So: authenticate (already enforced by SecurityConfig's
+ * `.anyRequest().authenticated()`) and relay; let the chain's authority (Warehouse
+ * Service) decide and propagate its denial back untouched.
  */
 @RestController
 public class WarehouseStockController {
@@ -27,13 +36,12 @@ public class WarehouseStockController {
         this.inventoryClient = inventoryClient;
     }
 
-    @GetMapping("/warehouse-stock/{branch}/{productId}")
-    @PreAuthorize("hasRole('warehouse-viewer') or hasRole('warehouse-viewer-all')")
+    @GetMapping("/warehouse-stock/{productId}")
     public ResponseEntity<String> getWarehouseStock(
-            @PathVariable String branch, @PathVariable String productId, @AuthenticationPrincipal Jwt jwt) {
+            @PathVariable String productId, @AuthenticationPrincipal Jwt jwt) {
         String inventoryToken = tokenExchangeClient.exchange(jwt.getTokenValue(), "inventory-service", "inventory");
         try {
-            String body = inventoryClient.getWarehouseStock(inventoryToken, branch, productId);
+            String body = inventoryClient.getWarehouseStock(inventoryToken, productId);
             return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
         } catch (HttpClientErrorException e) {
             return ResponseEntity.status(e.getStatusCode())

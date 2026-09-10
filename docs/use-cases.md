@@ -98,17 +98,33 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 
 **拒否の見え方**：Employee ServiceがHTTPエラー（403）を返し、frontend（BFF）までそのまま伝播する。UC3と同じ「入口でのRBAC拒否」の形。
 
-## 全支店の在庫照会（物流管理）
+## 支店別在庫照会（物流管理）
 
-### UC8: 正常系
+この画面のリクエストは商品IDのみを指定し、支店を指定しない。「支店Xの在庫は？」ではなく「**自分が見える範囲**の在庫は？」という質問として設計されている（architecture.md §20）。そのためABAC（所属支店との一致・不一致）は個別のエラーではなく、レスポンスに含まれる支店の数として現れる。RBAC（`warehouse-viewer`/`warehouse-viewer-all`をどちらも持たない）だけは、この画面自体の利用資格の有無を問う別種の判定として、従来通り明示的な拒否のまま残す。
 
-登場人物：sato-logistics（`warehouse-viewer-all`）
+### UC8: 正常系（`warehouse-viewer-all`は全支店が見える）
+
+登場人物：sato-logistics（`warehouse-viewer-all`、所属支店=大阪）
 
 ```
 1. sato-logistics が frontend からログインし、Order Service経由の受注照会は行わず、
-   物流管理向けの画面から特定支店（例: 大阪）の在庫を確認する
+   物流管理向けの画面から商品（例: product-A、東京・大阪の両方に実在庫がある）の在庫を確認する
 2. Warehouse Serviceへ到達するまでの経路はUC1と同様（Order Service→Inventory Service→Warehouse Service）
-3. Warehouse Service: sato-logisticsの所属支店が大阪でなくても、warehouse-viewer-allロールを保持 → 一致チェックを省略して許可（permission-matrix.md 表5）
+   だが、Order Service・Inventory Serviceはいずれも支店に関する判断を持たず中継するのみ（architecture.md §20）
+3. Warehouse Service: warehouse-viewer-allロールを保持 → 所属支店（大阪）に関わらず、
+   この商品の実在庫を持つ全支店（東京・大阪）を列挙して返す（permission-matrix.md 表5）
+```
+
+### UC10: 正常系（`warehouse-viewer`は自分の支店だけが見える）
+
+登場人物：yamada-sales（`warehouse-viewer`、所属支店=東京）
+
+```
+1. yamada-salesが同じ画面で商品（例: product-A）の在庫を確認する
+2. 経路はUC8と同様
+3. Warehouse Service: warehouse-viewer-allは持たないため、所属支店（東京）確認のためEmployee Serviceへ委任し、
+   確認できた自分の支店（東京）の実在庫のみを返す。大阪の実在庫はレスポンスに一切現れない
+   （UC4と同じABAC境界だが、ここではエラーではなく結果セットの範囲として表現される）
 ```
 
 ### UC9: 異常系・権限不足
@@ -116,11 +132,10 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 登場人物：suzuki-support（`warehouse-viewer`・`warehouse-viewer-all`のいずれも持たない）
 
 ```
-1. suzuki-support が物流管理向けの全支店在庫照会画面の利用を試みる
-2. Order Service: warehouse-viewerもwarehouse-viewer-allも持たない → 拒否（permission-matrix.md 表5「その他」行）
-3. Inventory Service・Warehouse Serviceへの委任チェーンは開始されない
+1. suzuki-support が物流管理向けの在庫照会画面の利用を試みる
+2. Order Service・Inventory Serviceは支店アクセスについて権限判断の権威を持たない
+   （architecture.md §20）ため、いずれもロールチェックをせずToken Exchangeで中継するのみ
+3. Warehouse Service: warehouse-viewerもwarehouse-viewer-allも持たない → 拒否（permission-matrix.md 表5「その他」行）
 ```
 
-**拒否の見え方**：Order Serviceの入口でのRBAC拒否のため、UC3・UC7と同じくHTTPエラーとしてfrontend（BFF）まで伝播する。
-
-（yamada-salesのように`warehouse-viewer`は持つが照会対象支店が所属支店と不一致、というケースはUC4と同じABAC拒否であり、本ユースケースの対象外）
+**拒否の見え方**：UC3の「入口（Order Service）でのRBAC拒否」とは異なり、拒否はチェーンの奥（Warehouse Service）で発生する。ただしUC8/UC9はUC4のような隠すべき業務結果を持たない読み取り専用操作のため、Warehouse Serviceからの403はOrder Serviceまで（値を書き換えられることなく）透過的なHTTPエラーとして伝播し、frontend（BFF）まで届く。外形上（HTTPステータスがfrontendまで403として伝わる点）はUC3と区別が付かないが、拒否が発生する層が異なる。UC9はこの画面を利用する資格自体が無いケースであり、UC10（資格はあるが見える範囲が自分の支店に絞られるケース）とは異なる種類の制限である。

@@ -1,11 +1,10 @@
-import { requireSession } from "../../../utils/session";
-import { exchangeForAudience } from "../../../utils/tokenExchange";
-import { callDownstream } from "../../../utils/dpop";
+import { requireSession } from "../../utils/session";
+import { exchangeForAudience } from "../../utils/tokenExchange";
+import { callDownstream } from "../../utils/dpop";
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig();
   const session = requireSession(event);
-  const branch = getRouterParam(event, "branch");
   const productId = getRouterParam(event, "productId");
 
   const orderServiceToken = await exchangeForAudience(
@@ -20,7 +19,7 @@ export default defineEventHandler(async (event) => {
   const response = await callDownstream(
     session.dpopKeyPair,
     "GET",
-    `${config.orderServiceBaseUrl}/warehouse-stock/${branch}/${productId}`,
+    `${config.orderServiceBaseUrl}/warehouse-stock/${productId}`,
     orderServiceToken,
   );
 

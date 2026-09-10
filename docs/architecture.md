@@ -272,3 +272,88 @@ edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には
 
 - どちらも解消するには、ホストマシンの`/etc/hosts`に偽のホスト名（例: `kikan-system.local`）を追加し、edge-proxyをポート80で公開する必要がある。これはリポジトリ外（クローンした各人の環境）への変更を要求するため、「ローカルでdocker compose一発で動く」というこのリポジトリの前提を損なう
 - 検討の結果、現状（`http://localhost:3000`）を維持し、既知の制約として本節に明記するのみとした
+
+## 19. アプリ層の認可DENYログ（監査ではなく異常検知・デバッグ用）
+
+### 業務的な認可判断は「監査」の対象にならない
+
+当初、UC4（[use-cases.md](use-cases.md)）の支店不一致による引当拒否のような、アプリ層の認可判断（PERMIT/DENY、その根拠）が既存の`access_log`（status=403とpath）だけでは追えないことを課題とし、§9・§10と同じ「監査」の枠組みで構造化ログを追加しようとした。しかし冷静に考えるとこれは§9・§10の監査設計とは性質が異なり、「監査」と呼ぶのは正確ではない。
+
+- §9・§10のTOKEN_EXCHANGE突合・jti重複検出は、**独立した2つのソース**（Keycloak自身のイベントログ、各サービス自身のaccess_log）を突き合わせて矛盾を検出する。§10が「自己申告ヘッダ（例: `X-Delegation-Chain`）は署名も検証もされず認可判断の根拠にできない」と明記している通り、片方だけの自己申告は認可判断の根拠になりえない
+- 一方、アプリ層の認可判断ログは、**判断を下した当のコード自身**が「PERMITした」「DENYした」と記録するものであり、構造的にはまさにこの「自己申告」に当たる。`authorize_branch`にバグがあり誤ってPERMITしても、ログは（誤った理由づけで）追認するだけで、突き合わせる独立した第二のソースが存在しない。判断の正しさを検証する力を持たない
+- さらにDENY自体はUC4のように業務ルール通りの正常系の一部であり、不正の兆候ではない。「監査」という語を使うと規約違反の摘発であるかのように読めてしまい、実態と合わない
+- PERMITを記録する価値はほぼない。`access_log`のstatus=200/201自体が既にPERMITの事実そのものであり、`decision: "PERMIT"`という行を足しても情報量は増えない
+
+### 採用：DENYのみを記録する`authz_deny`ログ行（異常検知・デバッグ用）
+
+上記を踏まえ、「監査」ではなく「異常検知・デバッグの手がかり」として位置づけを改め、範囲をDENYのみに絞った。
+
+- **用途**：(1) 同一`sub`から特定の`reason`（例：`branch_mismatch`）のDENYが短時間に連発するような**異常の兆候の検知**（ログイン失敗の監視と同種の考え方）、(2) 「なぜこの受注はREJECTEDになったのか」を追う**サポート・デバッグ**。判断の正しさを立証する監査証跡としては使わない
+- **フィールド**：`type`（固定値`"authz_deny"`）・`sub`・`jti`・`trace_id`（`access_log`と同じ値で`trace_id`突合可能）・`reason`
+- **記録箇所**：
+  - Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`、permission-matrix.md 表5）：RBAC段階の`role_missing`、ABAC段階の`branch_mismatch`／`employee_branch_unknown`を`branch`・`employee_branch`フィールドとともに記録
+  - Inventory Service（[auth.go](../inventory-service/auth.go)の`authMiddleware`、permission-matrix.md 表3）：RBAC判定の`role_missing`を`required_roles`フィールドとともに記録
+- **対象を両サービスに限定した理由**：Order Service（表2）・Employee Service（表4）の判定は「ロールの有無」の1軸のみで、`access_log`のstatus=403だけで理由が読み取れる（ロールが無かった、以外の理由がない）。表3・表5は複数の判定軸（ロール種別、ロールとABAC一致/不一致）を持ち、`reason`フィールドを持つ専用ログの価値がある
+
+### 不採用：`access_log`への埋め込み
+
+`access_log`の1行に`reason`を追加する案は採らなかった。`access_log`は5サービス共通の一定の形（method/path/status/duration_ms/sub/jti/trace_id）を保っており、認可判断のないエンドポイント（例：`/health`）にまで`reason`フィールドを持たせると常に`null`が並ぶ。別行に分けることで`access_log`の形を崩さず、DENYが発生した箇所でのみログが増える。
+
+### 監査ツールとの関係
+
+`audit/audit.py`の既存チェック（CHECK1〜3）は`type = "access_log"`でLogQLフィルタしており、`authz_deny`行は無関係のため影響しない。`authz_deny`ログを使った異常検知（同一subからの`reason`頻発検知など）の追加は今回のスコープ外で、[backlog.md](backlog.md)へ改めて起票する。
+
+## 20. 層の責務逆転（UC8/UC9/UC10）の是正
+
+### 原則
+
+[services.md](services.md)が定義する存在意義に立ち返ると、Warehouse Serviceは「特定拠点の実運用在庫データを持つ、組織的に独立した**拠点システム**」であり、支店別在庫・支店別アクセス制御（RBAC+ABAC、permission-matrix.md 表5）はその存在意義そのものである。一方Inventory Serviceは「商品カタログ横断の**集計・ルーティング層**」であり、「支店が違っても答えは同じであり、拠点別のアクセス制御はここでは行わない」と明記されている。Order Serviceの提供機能は受注登録・受注照会の2つのみで、支店別在庫照会はそもそも宣言された守備範囲に含まれない。
+
+つまり支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在し、Order Service・Inventory Serviceはこの判断について発言権を持たない。
+
+### 何が誤っていたか
+
+UC8/UC9（[use-cases.md](use-cases.md)）実装時、Order Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの両方が、Warehouse Service固有のロール（`warehouse-viewer`/`warehouse-viewer-all`）を直接チェックしていた。
+
+- Order Service側：他の受注系エンドポイントに倣い`@PreAuthorize`でロールを明示しようとした結果、自分の守備範囲にないロール名を借用してしまった
+- Inventory Service側：`authMiddleware`が非空の`requiredRoles`を要求する実装だったため、機能させるためにWarehouse Serviceのロール名を渡さざるを得なかった
+
+どちらも「Warehouse Service側のロール体系が変わればOrder Service/Inventory Serviceも追随変更が必要になる」という結合を生み、UC4で確立した層分離の原則と矛盾していた（[backlog.md](backlog.md)「UC8/UC9における層の責務逆転」として起票、本節で解消）。
+
+### 採用：質問の形を「支店Xは？」から「私は何が見える？」に変える
+
+Order Service・Inventory Serviceからロールチェックを取り除くだけでは、単に判断が「無くなる」だけで、UC8/UC9の画面がやりたいこと（見える範囲の実在庫を見せる）の設計としては未完成である。加えて、支店を指定させて権限エラーを返す形のままだと、「エラーを握りつぶして正常応答にすり替えたくなる」という別の誘惑を生む（検討の経緯は次項）。そこで、エンドポイント自体の質問の形を変えた。
+
+- 旧：「支店Xの在庫は？」（`GET /warehouse/:branch/stock/:product_id`）→ 権限がなければ403
+- 新：「**私が見える支店**の在庫は？」（`GET /warehouse/stock/:product_id`、支店をパスに含めない）→ 常に200。ABACの範囲がそのままレスポンスの支店集合になる
+
+具体的な実装：
+
+- Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`get_stock_by_branches`）：RBAC（`warehouse-viewer`/`warehouse-viewer-all`のいずれも無ければ403、UC9）はそのまま残す。`warehouse-viewer-all`は自分のRedisキー（`stock:*:{product_id}`）をスキャンしてこの商品の実在庫を持つ全支店を返す（UC8）。`warehouse-viewer`はEmployee Serviceで確認した自分の支店1件のみを返し、該当データが無ければ空集合を返す（UC10。エラーではなく正直な「該当なし」）
+- Inventory Service（[main.go](../inventory-service/main.go)・[auth.go](../inventory-service/auth.go)・[handlers.go](../inventory-service/handlers.go)）：`/warehouse-stock/{productId}`（支店なし）。`requiredRoles`は`nil`（認証のみ）で、レスポンスは解釈せずそのまま中継
+- Order Service（[WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)・[InventoryClient.java](../order-service/src/main/java/com/example/orderservice/InventoryClient.java)）：`@PreAuthorize`なし、`/warehouse-stock/{productId}`を中継
+- 権限判定の権威はWarehouse Serviceに一本化されたまま。UC9（ロール無し）の403だけは変更前と同じくOrder Serviceまで透過的に伝播する
+
+### 検討した代替案：403を握りつぶして正常応答にする
+
+Inventory Serviceに実在感を持たせるため、「Warehouse Serviceの403（アクセス権が無い）を、Inventory Service側で在庫0件・不明といった正常応答にすり替える」という案を検討したが、不採用にした。
+
+- **支店を指定させる形のままこれをやると虚偽になる**：本当は在庫があるのに「0件」と返すのは、その支店の実数値を偽って伝えることであり、UC8/UC9の画面の存在目的（正しい実数値を見せる）そのものを破壊する
+- **「403の意味を知ること」自体は問題ない**：403がアクセス拒否を意味するというのはAPI契約として公開された情報であり、これを知ること自体はWarehouse Serviceのロール名を知ることとは違う（実際、引当フロー`reserveAtWarehouse`は既に403/409を同一視しており、これは問題視されていない）。問題があるとすれば「握りつぶして偽の値に差し替える」という**結果**の方だった
+- 採用した「見える範囲を返す」形にした結果、ABAC不一致はそもそも403として発生しなくなり（UC10）、この論点自体が実質的に解消した。残るUC9の403（ロールが全く無い＝この画面の利用資格が無い）は、UC3/UC7と同種の「対象外の人です」という明示エラーとして、握りつぶさずそのまま伝播させる
+
+### 検討した代替案：Inventory Serviceに複数支店の引当ルーティングを持たせる
+
+「Inventory Serviceの存在意義を出すため、引当時にアクセス権のある倉庫から在庫の多い順に選ぶ、足りなければ複数支店からかき集める」という案も検討したが、不採用にした。
+
+- architecture.md §1が明言する本サンプルの目的は「アクセス権の照会・制御」であり、§6は「所属支店に応じて照会できる支店が制限される」ことをユースケースの核と位置づけている。倉庫横断のルーティング知能は物流最適化としての実在感（軸A）を足すが、この核（軸B）を迂回する方向に働く
+- 委任チェーンで元ユーザーのsubが最後まで維持されるため、Warehouse Serviceの表5判定は常に元ユーザー本人のABAC可視範囲で行われる。Inventory Serviceがどれだけ賢く経路を選んでも、本人のABACを超えた支店は選べない。テストユーザーの中に`order-writer`と`warehouse-viewer-all`を両方持つ人物がいないため、複数支店から選ぶという分岐が実際に効く場面が無く、効いたとしてもUC8が既に示す「`warehouse-viewer-all`はABACを上書きする」という論点の再演にしかならない
+- 「発注者個人のアクセス権が会社の引当能力を制限してよいか」という、より根本的な認可モデルの妥当性を問う論点は残るが、これはUC1〜UC4全体の設計を見直す規模の話であり、本節のスコープを超える
+
+### なぜOrder Serviceを経由すること自体は問題ないか
+
+frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。したがってfrontend発の要求がWarehouse Serviceに到達するには、業務ドメインとして関係があるかどうかに関わらずOrder Service→Inventory Serviceの経路を通るほかない。Order Service・Inventory Serviceがこの機能について中継に徹するのは、この委任トポロジー上の制約に対して誠実な実装であり、両サービスがこの業務について権限判断の権威を持たないことと矛盾しない。
+
+### 支店マスタへの暗黙依存という残存課題
+
+Warehouse Serviceの在庫キー（`stock:{branch}:{product_id}`、[db/seed.sh](../warehouse-service/db/seed.sh)）とEmployee Serviceの社員の所属支店フィールドは、どちらも`tokyo`/`osaka`という同じ文字列を使っているが、どちらかが他方の正典（マスタ）というわけではなく、単に同じ文字列を各サービスが独立に採用しているだけである。`get_stock_by_branches`の支店列挙は**Warehouse Serviceが自分の保有データ（Redisキー）だけをスキャンする**ことでこの問題を回避している（マスタへの問い合わせではなく、自分の在庫の列挙）。ただし将来「支店コードの正当性検証」「支店選択ドロップダウン」のように支店マスタそのものを参照する要件が生じた場合、マイクロサービスにおける典型的な参照データ（マスタデータ）共有問題が顕在化する。対処パターン（権威サービスへの都度問い合わせ、非同期レプリケーション、専用の参照データサービス）はいずれも本サンプルの現状のスコープでは過剰であり、現時点では対応しない。

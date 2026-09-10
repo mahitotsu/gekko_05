@@ -26,7 +26,7 @@ fn getenv(key: &str, fallback: &str) -> String {
 /// with `service.name`, W3C traceparent propagation, and a `tracing` subscriber whose
 /// spans are bridged to OTel. Returns the provider so the caller keeps it alive for the
 /// process lifetime (dropping it flushes and shuts down the exporter).
-fn current_trace_id() -> String {
+pub(crate) fn current_trace_id() -> String {
     use opentelemetry::trace::TraceContextExt;
     use tracing_opentelemetry::OpenTelemetrySpanExt;
     let ctx = tracing::Span::current().context();
@@ -144,7 +144,8 @@ async fn main() {
     });
 
     let protected = Router::new()
-        .route("/warehouse/:branch/stock/:product_id", get(handlers::get_stock))
+        // UC8/UC9: no :branch segment -- see get_stock_by_branches and architecture.md §20.
+        .route("/warehouse/stock/:product_id", get(handlers::get_stock_by_branches))
         .route("/warehouse/:branch/stock/:product_id/reserve", post(handlers::reserve_stock))
         // Axum: last .layer() is outermost (runs first). auth runs first and inserts
         // Claims into extensions; access_log runs second and reads those Claims.

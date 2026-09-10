@@ -72,9 +72,14 @@ Inventory Serviceとの違いを明確にするため、Warehouse Serviceは2段
 | warehouse-viewer | ALLOW | DENY |
 | その他 | DENY | DENY |
 
-実装：[handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`。支店が増えても列（一致/不一致）は変わらない。この3行×2列＝6ケースに対応する自動テストは未整備。
+実装：[handlers.rs](../warehouse-service/src/handlers.rs)。この表は2つのエンドポイントで使われ方が異なる。
 
-Order Serviceの`WarehouseStockController`（UC8/UC9）も`warehouse-viewer`/`warehouse-viewer-all`のロールチェックを行っているが、これはWarehouse Serviceの本表と同じロールをOrder Service側でも判定している状態であり、層の責務分離としては課題が残る（[backlog.md](backlog.md)参照）。
+- 引当（`POST /warehouse/:branch/stock/:product_id/reserve`、UC1/UC4）：`authorize_branch`が対象支店1つに対してこの表通りDENY/ALLOWを判定し、不一致はそのままリクエストの拒否になる
+- 支店別在庫照会（`GET /warehouse/stock/:product_id`、UC8/UC9/UC10）：`get_stock_by_branches`はRBAC行（ロールを持たない＝その他行）はそのままDENY（403）として扱うが、ABAC列（一致/不一致）は個々のリクエストの拒否ではなく、**レスポンスに含まれる支店の集合**として表現される（一致する支店だけが結果に現れ、不一致の支店は最初から候補に上らない）。表の意味自体は変わらないが、「不一致→DENY」の現れ方がエンドポイントによって異なる点に注意
+
+この3行×2列＝6ケースに対応する自動テストは未整備。
+
+この表の判定権威はWarehouse Service一箇所にのみ存在する。UC8/UC9/UC10の経路上にあるOrder Service・Inventory Serviceは、本表のロールを判定せずToken Exchangeで中継するのみ（architecture.md §20）。かつてはOrder Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの双方が本表と同じロールを重複判定しており、層の責務分離の課題として[backlog.md](backlog.md)に起票されていたが、architecture.md §20で解消済み。
 
 ## テストユーザー
 

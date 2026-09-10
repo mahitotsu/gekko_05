@@ -20,9 +20,8 @@ interface Employee {
 }
 
 interface WarehouseStock {
-  branch: string;
   product_id: string;
-  quantity: number;
+  branches: Record<string, number>;
 }
 
 const { data: me, refresh: refreshMe } = await useFetch<Me>("/api/me");
@@ -35,7 +34,6 @@ const employeeUsername = ref("");
 const employee = ref<Employee | null>(null);
 const employeeError = ref<string | null>(null);
 
-const warehouseBranch = ref("");
 const warehouseProductId = ref("");
 const warehouseStock = ref<WarehouseStock | null>(null);
 const warehouseError = ref<string | null>(null);
@@ -83,9 +81,9 @@ async function lookupWarehouseStock() {
   warehouseError.value = null;
   warehouseStock.value = null;
   try {
-    warehouseStock.value = await $fetch<WarehouseStock>(
-      `/api/warehouse-stock/${warehouseBranch.value}/${warehouseProductId.value}`,
-    );
+    // No branch in the request: the answer is "what can I see", scoped server-side to
+    // the caller's own visibility (architecture.md §20) -- not "show me branch X".
+    warehouseStock.value = await $fetch<WarehouseStock>(`/api/warehouse-stock/${warehouseProductId.value}`);
   } catch (error: any) {
     warehouseError.value = error?.data?.message || error?.statusMessage || "Failed to look up warehouse stock";
   }
@@ -141,12 +139,13 @@ if (me.value?.loggedIn) {
 
       <h2>支店別在庫照会（物流管理）</h2>
       <form id="warehouse-form" @submit.prevent="lookupWarehouseStock">
-        <input v-model="warehouseBranch" name="branch" placeholder="branch" required />
         <input v-model="warehouseProductId" name="productId" placeholder="productId" required />
         <button type="submit">照会</button>
       </form>
       <p id="warehouse-result" v-if="warehouseStock">
-        {{ warehouseStock.branch }} / {{ warehouseStock.product_id }} &mdash; {{ warehouseStock.quantity }}
+        {{ warehouseStock.product_id }} &mdash;
+        <span v-if="Object.keys(warehouseStock.branches).length === 0">見える支店はありません</span>
+        <span v-for="(quantity, branch) in warehouseStock.branches" :key="branch">{{ branch }}: {{ quantity }}　</span>
       </p>
       <p v-if="warehouseError" id="warehouse-error" style="color: red;">{{ warehouseError }}</p>
     </section>

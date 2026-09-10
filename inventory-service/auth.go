@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -110,8 +112,12 @@ func (c *jwksCache) keyfunc(token *jwt.Token) (interface{}, error) {
 	return key, nil
 }
 
-// authMiddleware validates the bearer token's signature, issuer and audience, then
-// requires the caller to hold at least one of the given realm roles (realm_access.roles).
+// authMiddleware validates the bearer token's signature, issuer and audience, then, if
+// requiredRoles is non-empty, requires the caller to hold at least one of those realm
+// roles (realm_access.roles). A nil/empty requiredRoles means this route has no role of
+// its own to check -- authentication alone gates it, and authority for whatever happens
+// next lives entirely downstream (see /warehouse-stock's registration in main.go and
+// architecture.md §20).
 func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -142,13 +148,43 @@ func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, 
 		r.Header.Set("X-Subject", subjectFrom(claims))
 		r.Header.Set("X-Jti", jtiFrom(claims))
 
-		if !hasAnyRole(claims, requiredRoles) {
+		if len(requiredRoles) > 0 && !hasAnyRole(claims, requiredRoles) {
+			logAuthzDeny(r.Context(), claims, "role_missing", requiredRoles)
 			http.Error(w, "insufficient role", http.StatusForbidden)
 			return
 		}
 
 		next(w, r)
 	}
+}
+
+// logAuthzDeny emits a structured `authz_deny` log line, separate from
+// accessLogMiddleware's per-request line: the latter carries status/path (403 on
+// POST /inventory/{id}/reserve) but not *why* in a queryable field. DENY-only,
+// deliberately: this is a self-reported log written by the same code whose judgment it
+// describes, so (unlike §10's Keycloak-vs-access_log jti/TOKEN_EXCHANGE cross-check) it
+// has no independent second source to verify a decision against, and can't prove a
+// PERMIT was correct -- see architecture.md §19. Its value is limited to anomaly triage
+// and support debugging, not audit. Fields mirror access_log's sub/jti/trace_id so the
+// two correlate (permission-matrix.md 表3).
+func logAuthzDeny(ctx context.Context, claims jwt.MapClaims, reason string, requiredRoles []string) {
+	entry := struct {
+		Type          string   `json:"type"`
+		Sub           string   `json:"sub"`
+		Jti           string   `json:"jti"`
+		TraceID       string   `json:"trace_id"`
+		Reason        string   `json:"reason"`
+		RequiredRoles []string `json:"required_roles"`
+	}{
+		Type:          "authz_deny",
+		Sub:           subjectFrom(claims),
+		Jti:           jtiFrom(claims),
+		TraceID:       traceIDFromContext(ctx),
+		Reason:        reason,
+		RequiredRoles: requiredRoles,
+	}
+	line, _ := json.Marshal(entry)
+	os.Stdout.Write(append(line, '\n'))
 }
 
 func hasAnyRole(claims jwt.MapClaims, required []string) bool {

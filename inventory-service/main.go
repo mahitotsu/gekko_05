@@ -62,6 +62,17 @@ func initTracer(ctx context.Context) (func(context.Context) error, error) {
 	return tp.Shutdown, nil
 }
 
+// traceIDFromContext reads the active OTel span's trace id out of ctx, or "-" if none
+// is present. Shared by accessLogMiddleware and authMiddleware's authz_decision
+// logging so both log lines carry the same trace_id for a given request.
+func traceIDFromContext(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		return span.SpanContext().TraceID().String()
+	}
+	return "-"
+}
+
 // responseWriter captures the HTTP status code written by the handler.
 type responseWriter struct {
 	http.ResponseWriter
@@ -85,11 +96,7 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rw, r)
 
-		span := trace.SpanFromContext(r.Context())
-		traceID := "-"
-		if span.SpanContext().IsValid() {
-			traceID = span.SpanContext().TraceID().String()
-		}
+		traceID := traceIDFromContext(r.Context())
 
 		entry := struct {
 			Type       string `json:"type"`
@@ -163,11 +170,15 @@ func main() {
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-reader", "inventory-writer"}, handlers.getProduct))
 	mux.HandleFunc("POST /inventory/{id}/reserve",
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-writer"}, handlers.reserve))
-	// Gated by warehouse-viewer(-all), not inventory-reader/-writer: this passthrough's
-	// authorization concern is branch access (Warehouse Service's domain), not
-	// aggregate-inventory operations -- see docs/use-cases.md UC8/UC9.
-	mux.HandleFunc("GET /warehouse-stock/{branch}/{productId}",
-		authMiddleware(keyfunc, keycloakIssuer, []string{"warehouse-viewer", "warehouse-viewer-all"}, handlers.getWarehouseStock))
+	// No required roles (nil, not inventory-reader/-writer, and deliberately not
+	// warehouse-viewer/-all either): branch access is Warehouse Service's domain alone
+	// (services.md: it's the "組織的に独立した拠点システム"; Inventory Service is only a
+	// "集計・ルーティング層" that explicitly does not do branch-level access control).
+	// No {branch} in the path either -- the request is "what can I see for this
+	// product", not "show me branch X" -- see docs/use-cases.md UC8/UC9 and
+	// architecture.md §20.
+	mux.HandleFunc("GET /warehouse-stock/{productId}",
+		authMiddleware(keyfunc, keycloakIssuer, nil, handlers.getWarehouseStock))
 
 	log.Println("inventory-service listening on :8082")
 	// accessLogMiddleware is placed inside otelhttp so r.Context() carries the active
