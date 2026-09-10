@@ -224,8 +224,6 @@ realm-export.jsonは**Keycloakの完全な設定ダンプではなく、意図�
 - 画面（`app/app.vue`）は受注登録フォーム・受注一覧・社員情報照会のみで、全て同一オリジンの`/api/*`へfetchする
 - `frontend/e2e/login-and-order.mjs`（`npm run e2e`）としてPlaywright E2Eテストを常設。ログイン→受注登録→一覧反映→自分の社員情報照会までを実ブラウザで検証する。`keycloak/tests/permission-matrix.sh`がKeycloak層の検証を担うのと対になる、UIからの検証
 
-初期版（アクセストークンをブラウザ側IndexedDB等に保持するSPA構成）はOAuth 2.0 Security BCPがXSSによる漏洩リスクとして非推奨としているため不採用とし、現在のBFF構成に置き換えた。
-
 ## 15. DPoPの設計
 
 §11で採用したDPoP (RFC 9449) の適用範囲はfrontendのみ。
