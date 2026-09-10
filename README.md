@@ -20,6 +20,7 @@ docker compose up --build
 - [docs/services.md](docs/services.md) — 各サービスの存在意義・提供機能・保有データ
 - [docs/permission-matrix.md](docs/permission-matrix.md) — 認可のディシジョンテーブル
 - [docs/use-cases.md](docs/use-cases.md) — 具体的な業務シナリオと委任チェーンの流れ
+- [docs/audit-demo.md](docs/audit-demo.md) — トークン発行・利用記録とアクセスログの突合デモ
 - [docs/insights.md](docs/insights.md) — 実装中に見つかった罠・気づき
 - [docs/backlog.md](docs/backlog.md) — 未着手の改善項目
 
@@ -27,3 +28,12 @@ docker compose up --build
 
 - `keycloak/tests/permission-matrix.sh` — Keycloak層（Token Exchangeの許可/拒否）の検証
 - `frontend/e2e/login-and-order.mjs`（`npm run e2e`） — 実ブラウザでのログイン〜受注登録のE2E検証
+
+## 監査デモ
+
+```
+make audit-scenario  # トラフィック生成
+make audit-report    # トークン発行・利用記録とアクセスログの突合レポート
+```
+
+詳細は[docs/audit-demo.md](docs/audit-demo.md)を参照。
