@@ -111,13 +111,16 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 3. Warehouse Service: sato-logisticsの所属支店が大阪でなくても、warehouse-viewer-allロールを保持 → 一致チェックを省略して許可（permission-matrix.md 表5）
 ```
 
-### UC9: 異常系・権限不足（新規、仕様のみ定義）
+### UC9: 異常系・権限不足
 
-登場人物：`warehouse-viewer-all`を持たない任意のユーザー（例: yamada-sales、suzuki-support）
+登場人物：suzuki-support（`warehouse-viewer`・`warehouse-viewer-all`のいずれも持たない）
 
 ```
-1. ユーザーが物流管理向けの全支店在庫照会画面の利用を試みる
-2. Warehouse Service: warehouse-viewer-allロールを持たない（warehouse-viewerのみ、または無ロール）→ 拒否（permission-matrix.md 表5「その他」行）
+1. suzuki-support が物流管理向けの全支店在庫照会画面の利用を試みる
+2. Order Service: warehouse-viewerもwarehouse-viewer-allも持たない → 拒否（permission-matrix.md 表5「その他」行）
+3. Inventory Service・Warehouse Serviceへの委任チェーンは開始されない
 ```
 
-**現状の位置づけ**：UC8の物流管理向け画面自体がfrontendに未実装のため（`docs/backlog.md`「UC8のWebUI導線」参照）、本ユースケースはブラウザ経由の実トラフィックで検証できない。ユースケースとしての仕様は実装状況に関わらずここで定義し、e2e自動化はWebUI導線の実装後に着手する。
+**拒否の見え方**：Order Serviceの入口でのRBAC拒否のため、UC3・UC7と同じくHTTPエラーとしてfrontend（BFF）まで伝播する。
+
+（yamada-salesのように`warehouse-viewer`は持つが照会対象支店が所属支店と不一致、というケースはUC4と同じABAC拒否であり、本ユースケースの対象外）

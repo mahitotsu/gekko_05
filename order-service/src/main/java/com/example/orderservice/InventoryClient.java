@@ -45,4 +45,18 @@ public class InventoryClient {
             throw e;
         }
     }
+
+    /**
+     * Passthrough for a specific branch's real stock (UC8/UC9). Any non-2xx response
+     * (e.g. Warehouse Service's 403 for a denied branch) is left to throw
+     * HttpClientErrorException -- the caller relays it as-is, since this read has no
+     * business-state outcome to hide behind, unlike reserve()'s 409 handling above.
+     */
+    public String getWarehouseStock(String inventoryToken, String branch, String productId) {
+        return restClient.get()
+            .uri("/warehouse-stock/{branch}/{productId}", branch, productId)
+            .header("Authorization", "Bearer " + inventoryToken)
+            .retrieve()
+            .body(String.class);
+    }
 }

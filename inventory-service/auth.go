@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -23,18 +25,36 @@ type jwkSet struct {
 	} `json:"keys"`
 }
 
-// fetchJWKS fetches Keycloak's signing keys once at startup and builds a jwt.Keyfunc.
-// A demo-scale simplification: keys are cached for the process lifetime, no rotation handling.
-func fetchJWKS(jwksURL string) (jwt.Keyfunc, error) {
-	resp, err := http.Get(jwksURL)
+// jwksCache holds Keycloak's signing keys, refetched on demand when a token presents a
+// kid we don't recognize (e.g. after Keycloak rotates its keys on a restart) rather than
+// only once at process startup. minInterval rate-limits refetches so a stream of bogus
+// kids can't turn key lookups into a self-inflicted DoS against Keycloak.
+type jwksCache struct {
+	mu          sync.RWMutex
+	keys        map[string]*rsa.PublicKey
+	jwksURL     string
+	lastFetch   time.Time
+	minInterval time.Duration
+}
+
+func newJWKSCache(jwksURL string) (*jwksCache, error) {
+	c := &jwksCache{jwksURL: jwksURL, minInterval: 10 * time.Second}
+	if err := c.refresh(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *jwksCache) refresh() error {
+	resp, err := http.Get(c.jwksURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetching JWKS: %w", err)
+		return fmt.Errorf("fetching JWKS: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var set jwkSet
 	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
-		return nil, fmt.Errorf("decoding JWKS: %w", err)
+		return fmt.Errorf("decoding JWKS: %w", err)
 	}
 
 	keys := make(map[string]*rsa.PublicKey)
@@ -56,14 +76,38 @@ func fetchJWKS(jwksURL string) (jwt.Keyfunc, error) {
 		}
 	}
 
-	return func(token *jwt.Token) (interface{}, error) {
-		kid, _ := token.Header["kid"].(string)
-		key, ok := keys[kid]
-		if !ok {
-			return nil, fmt.Errorf("unknown kid: %s", kid)
-		}
+	c.mu.Lock()
+	c.keys = keys
+	c.lastFetch = time.Now()
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *jwksCache) keyfunc(token *jwt.Token) (interface{}, error) {
+	kid, _ := token.Header["kid"].(string)
+
+	c.mu.RLock()
+	key, ok := c.keys[kid]
+	staleEnough := time.Since(c.lastFetch) >= c.minInterval
+	c.mu.RUnlock()
+	if ok {
 		return key, nil
-	}, nil
+	}
+	if !staleEnough {
+		return nil, fmt.Errorf("unknown kid: %s", kid)
+	}
+
+	if err := c.refresh(); err != nil {
+		return nil, fmt.Errorf("unknown kid: %s (refresh failed: %w)", kid, err)
+	}
+
+	c.mu.RLock()
+	key, ok = c.keys[kid]
+	c.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("unknown kid: %s", kid)
+	}
+	return key, nil
 }
 
 // authMiddleware validates the bearer token's signature, issuer and audience, then

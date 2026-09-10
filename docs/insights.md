@@ -42,6 +42,22 @@ edge-proxy導入直後、DPoP必須の全リクエスト（ログイン含む）
 
 `wget http://localhost:3000/...`をedge-proxyコンテナ内で実行すると`Connection refused`になった。nginxの`listen 3000;`はIPv4のみでbindしており、コンテナの`/etc/hosts`は`localhost`を`::1`（IPv6）優先で解決するため、wgetがIPv4へフォールバックする前に拒否される。`127.0.0.1`を明示することで解決（他サービスの`GET /health`ヘルスチェックは各言語のHTTPサーバーがデュアルスタックでbindしているため同じ問題が起きていない）。
 
+### 特定サービスだけ`docker compose up -d --build <service>`で再作成すると、edge-proxyが古いIPをキャッシュしたままになる（`resolver`ディレクティブで恒久対応済み）
+
+`frontend`だけを再ビルド・再作成した際、`docker compose logs edge-proxy`に`connect() failed (111: Connection refused)`が出続け、ブラウザからは常に502になった。原因はDockerのユーザー定義ネットワーク特有の挙動：コンテナ名はDocker組み込みDNS（`127.0.0.11`）で解決されるが、`proxy_pass http://frontend:3000;`のように宛先を直書きすると、nginxはconfigパース時にstatic upstream扱いにしてワーカープロセス起動時に一度だけ名前解決・キャッシュしてしまう。再作成されたコンテナは新しいIPを持つが、nginx側は古いIPへ接続し続ける。`docker compose exec edge-proxy wget -qO- http://frontend:3000/`は（DNS解決からやり直すため）正常に返る一方、nginx経由のリクエストだけ失敗する、という食い違いが切り分けの決め手になった。
+
+対応：`edge-proxy/nginx.conf`に`resolver 127.0.0.11 valid=10s;`を追加し、全`proxy_pass`の宛先を`set $xxx_upstream <service>; proxy_pass http://$xxx_upstream:<port>;`という変数経由の形に変更した。変数を介すとnginxは宛先をstaticではなくdynamicなupstreamとして扱い、`resolver`の`valid`（TTL）ごとに実際にDNSへ問い合わせ直すため、バックエンドコンテナが個別に再作成されてIPが変わっても、edge-proxy自身を再起動せずに追従する（実機で確認：`frontend`のみ`--force-recreate`した直後もedge-proxy無再起動でHTTP 200を維持）。
+
+### Keycloakだけを再作成すると、JWKSをプロセス起動時に一度だけキャッシュしている他サービスの検証が全滅する（未知kidでの自動再取得で恒久対応済み）
+
+`docker compose up -d --build <他のサービス>`を実行しただけのつもりが、依存関係の都合でKeycloakコンテナも`Recreate`されることがある（`start-dev`は起動のたびに署名鍵を含む状態を再構成するため、コンテナ再作成のたびに鍵が変わりうる）。Go（inventory-service）・Rust（warehouse-service）は元々起動時に一度だけJWKSを取得してプロセス生存期間中キャッシュする実装だったため、Keycloak側の鍵が変わった後もこれらのサービスが再起動していないと、Order Serviceからの下流呼び出しが`token is unverifiable: error while executing keyfunc: unknown kid`で失敗し続けていた。Java（order-service, Spring SecurityのNimbusJwtDecoder）・Python（employee-service, PyJWTの`PyJWKClient`）は元々未知kid時に自動で再取得するキャッシュ機構を内蔵しており、この問題自体が起きない。
+
+対応：Go・Rustそれぞれで「未知のkidに遭遇したら再取得する」ロジックを追加した。
+
+- Go（`inventory-service/auth.go`）：鍵マップを`sync.RWMutex`で保護し、`keyfunc`が未知のkidを見たら（前回取得から`minInterval`＝10秒以上経過していれば）同期的に再フェッチしてリトライする`jwksCache`型に変更
+- Rust（`warehouse-service/src/auth.rs`）：`AuthContext::verify`は意図的に同期関数のまま維持し（後述の理由）、未知のkidを見たら`tokio::spawn`でバックグラウンド再フェッチを起動する方式にした。そのリクエスト自体は「unknown kid」のまま失敗するが、次のリクエストからは再取得済みの鍵で成功する（実機で確認：Keycloakのみ`--force-recreate`した直後の1回目は失敗、3秒後の2回目でinventory-service/warehouse-serviceを手動再起動せずに成功）。再取得はrate-limit（10秒間隔）＋重複排除（`AtomicBool`で同時に1つまで）してあり、偽のkidを送りつけるだけでKeycloakへの再フェッチを乱発させられない設計
+- Rust特有の罠：`verify`を`async fn`にしてbody内で素直に`.await`する実装を最初に試したところ、`main.rs`の`.layer(middleware::from_fn_with_state(auth_ctx, auth::auth_middleware))`がコンパイルエラーになった（`axum-tracing-opentelemetry`がaxum 0.8を、アプリ自身はaxum 0.7を要求しており、Cargo.lock上は元から両方共存している——エラーメッセージの"there are multiple different versions of crate axum"はこれを指す）。`auth_middleware`自体のシグネチャは変えていないのに、内部の`.await`が1段増えるだけでこの潜在的なバージョン混在がコンパイルエラーとして顕在化した。回避策として`verify`を同期関数のまま保ち、実際の再フェッチだけを`tokio::spawn`のバックグラウンドタスクに逃がすことで、`auth_middleware`のFuture形状を一切変えずに済ませた
+
 ### Nitroの`runtimeConfig`は`NUXT_<KEY>`以外の環境変数名を実行時に読まない
 
 `nuxt.config.ts`の`runtimeConfig`に書いたデフォルト値は**ビルド時**に評価される。`docker compose`の`environment:`で渡した素の環境変数名（例: `KEYCLOAK_INTERNAL_URL`）はNitro起動時には反映されず、ビルド時のフォールバック値がそのまま使われてしまう。Nitroが実行時に上書きを認識するのは`NUXT_`プレフィックス＋大文字スネークケース（例: `NUXT_KEYCLOAK_INTERNAL_URL`）の環境変数のみ。`compose.yml`側の環境変数名を全て`NUXT_`プレフィックス付きに修正して解決した。

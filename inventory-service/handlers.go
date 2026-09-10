@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -135,6 +136,45 @@ func (h *InventoryHandlers) reserveAtWarehouse(ctx context.Context, token, branc
 	default:
 		return false, fmt.Errorf("unexpected status %d from warehouse-service", resp.StatusCode)
 	}
+}
+
+// getWarehouseStock (UC8/UC9, docs/use-cases.md) is a passthrough for a specific
+// branch's real stock, used by the logistics all-branch inquiry screen. Unlike
+// reserveAtWarehouse, this is a read with no business-state outcome to hide behind, so
+// Warehouse Service's actual status/body (200 with the real quantity, or 403 for a
+// denied branch) is relayed as-is rather than collapsed into a generic result --
+// branch access denial should be visible here, not disguised.
+func (h *InventoryHandlers) getWarehouseStock(w http.ResponseWriter, r *http.Request) {
+	branch := r.PathValue("branch")
+	productID := r.PathValue("productId")
+
+	rawToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	warehouseToken, err := h.tokenExchange.Exchange(r.Context(), rawToken, "warehouse-service", "warehouse")
+	if err != nil {
+		log.Printf("token exchange for warehouse-service failed: %v", err)
+		http.Error(w, "downstream authorization failed", http.StatusBadGateway)
+		return
+	}
+
+	url := fmt.Sprintf("%s/warehouse/%s/stock/%s", h.warehouseBaseURL, branch, productID)
+	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+warehouseToken)
+
+	resp, err := tracedHTTPClient.Do(httpReq)
+	if err != nil {
+		log.Printf("warehouse-service call failed: %v", err)
+		http.Error(w, "downstream call failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 func (h *InventoryHandlers) loadProduct(id string) (Product, error) {

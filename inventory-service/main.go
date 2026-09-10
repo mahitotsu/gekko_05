@@ -89,10 +89,11 @@ func main() {
 	}
 	defer db.Close()
 
-	keyfunc, err := fetchJWKS(keycloakInternalURL + "/protocol/openid-connect/certs")
+	keyCache, err := newJWKSCache(keycloakInternalURL + "/protocol/openid-connect/certs")
 	if err != nil {
 		log.Fatalf("fetching JWKS: %v", err)
 	}
+	keyfunc := keyCache.keyfunc
 
 	tokenExchange := NewTokenExchangeClient(keycloakInternalURL, clientID, clientSecret)
 	handlers := &InventoryHandlers{db: db, tokenExchange: tokenExchange, warehouseBaseURL: warehouseBaseURL}
@@ -106,6 +107,11 @@ func main() {
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-reader", "inventory-writer"}, handlers.getProduct))
 	mux.HandleFunc("POST /inventory/{id}/reserve",
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-writer"}, handlers.reserve))
+	// Gated by warehouse-viewer(-all), not inventory-reader/-writer: this passthrough's
+	// authorization concern is branch access (Warehouse Service's domain), not
+	// aggregate-inventory operations -- see docs/use-cases.md UC8/UC9.
+	mux.HandleFunc("GET /warehouse-stock/{branch}/{productId}",
+		authMiddleware(keyfunc, keycloakIssuer, []string{"warehouse-viewer", "warehouse-viewer-all"}, handlers.getWarehouseStock))
 
 	log.Println("inventory-service listening on :8082")
 	// WithFilter skips span creation for the compose healthcheck's GET /health (hit

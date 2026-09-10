@@ -19,6 +19,12 @@ interface Employee {
   branch: string;
 }
 
+interface WarehouseStock {
+  branch: string;
+  product_id: string;
+  quantity: number;
+}
+
 const { data: me, refresh: refreshMe } = await useFetch<Me>("/api/me");
 
 const orders = ref<Order[]>([]);
@@ -28,6 +34,11 @@ const newOrder = reactive({ customerId: "", productId: "", quantity: 1 });
 const employeeUsername = ref("");
 const employee = ref<Employee | null>(null);
 const employeeError = ref<string | null>(null);
+
+const warehouseBranch = ref("");
+const warehouseProductId = ref("");
+const warehouseStock = ref<WarehouseStock | null>(null);
+const warehouseError = ref<string | null>(null);
 
 async function loadOrders() {
   orderError.value = null;
@@ -65,6 +76,18 @@ async function lookupEmployee() {
     employee.value = await $fetch<Employee>(`/api/employees/${employeeUsername.value}`);
   } catch (error: any) {
     employeeError.value = error?.data?.message || error?.statusMessage || "Failed to look up employee";
+  }
+}
+
+async function lookupWarehouseStock() {
+  warehouseError.value = null;
+  warehouseStock.value = null;
+  try {
+    warehouseStock.value = await $fetch<WarehouseStock>(
+      `/api/warehouse-stock/${warehouseBranch.value}/${warehouseProductId.value}`,
+    );
+  } catch (error: any) {
+    warehouseError.value = error?.data?.message || error?.statusMessage || "Failed to look up warehouse stock";
   }
 }
 
@@ -115,6 +138,17 @@ if (me.value?.loggedIn) {
         {{ employee.username }} &mdash; {{ employee.department }} / {{ employee.branch }}
       </p>
       <p v-if="employeeError" id="employee-error" style="color: red;">{{ employeeError }}</p>
+
+      <h2>支店別在庫照会（物流管理）</h2>
+      <form id="warehouse-form" @submit.prevent="lookupWarehouseStock">
+        <input v-model="warehouseBranch" name="branch" placeholder="branch" required />
+        <input v-model="warehouseProductId" name="productId" placeholder="productId" required />
+        <button type="submit">照会</button>
+      </form>
+      <p id="warehouse-result" v-if="warehouseStock">
+        {{ warehouseStock.branch }} / {{ warehouseStock.product_id }} &mdash; {{ warehouseStock.quantity }}
+      </p>
+      <p v-if="warehouseError" id="warehouse-error" style="color: red;">{{ warehouseError }}</p>
     </section>
   </main>
 </template>

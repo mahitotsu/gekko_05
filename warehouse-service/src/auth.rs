@@ -7,7 +7,9 @@ use axum::{
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Deserialize)]
 struct Jwk {
@@ -44,38 +46,76 @@ impl Claims {
     }
 }
 
-pub struct AuthContext {
+const MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+
+struct KeySet {
     keys: HashMap<String, DecodingKey>,
-    issuer: String,
-    audience: String,
+    last_fetch: Instant,
 }
 
-/// Fetches Keycloak's signing keys once at startup. Demo-scale simplification:
-/// keys are cached for the process lifetime, no rotation handling.
-pub async fn build_auth_context(
+pub struct AuthContext {
+    keyset: Arc<RwLock<KeySet>>,
+    jwks_url: String,
+    issuer: String,
+    audience: String,
+    http: reqwest::Client,
+    // Deduplicates concurrent refresh attempts: only one background refetch in flight
+    // at a time, regardless of how many requests hit an unknown kid simultaneously.
+    refreshing: Arc<AtomicBool>,
+}
+
+async fn fetch_keys(
+    http: &reqwest::Client,
     jwks_url: &str,
-    issuer: &str,
-    audience: &str,
-) -> Result<Arc<AuthContext>, Box<dyn std::error::Error>> {
-    let resp = reqwest::get(jwks_url).await?.json::<JwkSet>().await?;
+) -> Result<HashMap<String, DecodingKey>, Box<dyn std::error::Error>> {
+    let resp = http.get(jwks_url).send().await?.json::<JwkSet>().await?;
     let mut keys = HashMap::new();
     for jwk in resp.keys {
         if let Ok(key) = DecodingKey::from_rsa_components(&jwk.n, &jwk.e) {
             keys.insert(jwk.kid, key);
         }
     }
+    Ok(keys)
+}
+
+/// Fetches Keycloak's signing keys once at startup, kept in sync afterward by
+/// `AuthContext::verify` triggering a background refetch whenever a token presents a
+/// kid we don't recognize (e.g. after Keycloak rotates its keys on a restart).
+pub async fn build_auth_context(
+    jwks_url: &str,
+    issuer: &str,
+    audience: &str,
+) -> Result<Arc<AuthContext>, Box<dyn std::error::Error>> {
+    let http = reqwest::Client::new();
+    let keys = fetch_keys(&http, jwks_url).await?;
     Ok(Arc::new(AuthContext {
-        keys,
+        keyset: Arc::new(RwLock::new(KeySet { keys, last_fetch: Instant::now() })),
+        jwks_url: jwks_url.to_string(),
         issuer: issuer.to_string(),
         audience: audience.to_string(),
+        http,
+        refreshing: Arc::new(AtomicBool::new(false)),
     }))
 }
 
 impl AuthContext {
+    // Deliberately synchronous (no `.await`): auth_middleware is registered via
+    // `middleware::from_fn_with_state`, whose trait-bound resolution against this
+    // repo's split axum 0.7/0.8 dependency graph (axum-tracing-opentelemetry pulls in
+    // 0.8) is fragile -- adding an extra `.await` hop here broke it in practice. Doing
+    // the actual key refetch in a spawned background task instead keeps
+    // auth_middleware's own async shape untouched.
     fn verify(&self, token: &str) -> Result<Claims, String> {
         let header = decode_header(token).map_err(|e| e.to_string())?;
         let kid = header.kid.ok_or("missing kid")?;
-        let key = self.keys.get(&kid).ok_or("unknown kid")?;
+
+        let key_present = self.keyset.read().unwrap().keys.contains_key(&kid);
+        if !key_present {
+            self.maybe_spawn_refresh();
+        }
+
+        let guard = self.keyset.read().unwrap();
+        let key = guard.keys.get(&kid).ok_or("unknown kid")?;
 
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.issuer]);
@@ -83,6 +123,32 @@ impl AuthContext {
 
         let data = decode::<Claims>(token, key, &validation).map_err(|e| e.to_string())?;
         Ok(data.claims)
+    }
+
+    /// Rate-limited (MIN_REFRESH_INTERVAL) and deduplicated (refreshing flag), so a
+    /// stream of bogus kids can't turn this into a self-inflicted DoS against Keycloak.
+    /// The request that triggered this still sees "unknown kid" -- the refetch lands in
+    /// time for the *next* request, not this one.
+    fn maybe_spawn_refresh(&self) {
+        if self.keyset.read().unwrap().last_fetch.elapsed() < MIN_REFRESH_INTERVAL {
+            return;
+        }
+        if self.refreshing.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return;
+        }
+
+        let keyset = self.keyset.clone();
+        let http = self.http.clone();
+        let jwks_url = self.jwks_url.clone();
+        let refreshing = self.refreshing.clone();
+        tokio::spawn(async move {
+            if let Ok(fresh) = fetch_keys(&http, &jwks_url).await {
+                let mut guard = keyset.write().unwrap();
+                guard.keys = fresh;
+                guard.last_fetch = Instant::now();
+            }
+            refreshing.store(false, Ordering::SeqCst);
+        });
     }
 }
 
