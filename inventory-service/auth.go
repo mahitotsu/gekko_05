@@ -27,10 +27,10 @@ type jwkSet struct {
 	} `json:"keys"`
 }
 
-// jwksCache holds Keycloak's signing keys, refetched on demand when a token presents a
-// kid we don't recognize (e.g. after Keycloak rotates its keys on a restart) rather than
-// only once at process startup. minInterval rate-limits refetches so a stream of bogus
-// kids can't turn key lookups into a self-inflicted DoS against Keycloak.
+// jwksCacheはKeycloakの署名鍵を保持する。プロセス起動時に一度だけ取得するのではなく、
+// 見覚えのないkidを持つトークンが来たとき（例：Keycloakが再起動で鍵をローテーション
+// した後）にオンデマンドで再取得する。minIntervalは再取得をレート制限しており、偽の
+// kidを送りつけ続けることでKeycloakへの鍵検索が自己誘発的なDoSと化すのを防ぐ。
 type jwksCache struct {
 	mu          sync.RWMutex
 	keys        map[string]*rsa.PublicKey
@@ -112,12 +112,12 @@ func (c *jwksCache) keyfunc(token *jwt.Token) (interface{}, error) {
 	return key, nil
 }
 
-// authMiddleware validates the bearer token's signature, issuer and audience, then, if
-// requiredRoles is non-empty, requires the caller to hold at least one of those realm
-// roles (realm_access.roles). A nil/empty requiredRoles means this route has no role of
-// its own to check -- authentication alone gates it, and authority for whatever happens
-// next lives entirely downstream (see /warehouse-stock's registration in main.go and
-// architecture.md §20).
+// authMiddlewareはbearerトークンの署名・issuer・audienceを検証したうえで、
+// requiredRolesが空でなければ、呼び出し元がそのうち少なくとも1つのrealmロール
+// （realm_access.roles）を持つことを要求する。requiredRolesがnil/空の場合は、この
+// ルート自身がチェックすべきロールを持たないことを意味する——認証のみがゲートであり、
+// この先で行使される権限は完全に下流の責務になる（main.goの/warehouse-stock登録と
+// architecture.md §20を参照）。
 func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -140,11 +140,11 @@ func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, 
 			return
 		}
 
-		// Set before the role check: the token itself is valid at this point (a
-		// legitimate Token Exchange result), so the access log should still record
-		// sub/jti even when the request is denied for insufficient role -- otherwise
-		// a 403 here would be indistinguishable from a bypassed/absent token in the
-		// audit's jti-based checks.
+		// ロールチェックより前に設定する：この時点でトークン自体は正当（正規の
+		// Token Exchangeの結果）なので、ロール不足で拒否される場合でもアクセス
+		// ログにはsub/jtiを記録すべきである。そうしないと、ここでの403が監査の
+		// jtiベースのチェック上、トークンが素通り／欠落した場合と区別できなく
+		// なってしまう。
 		r.Header.Set("X-Subject", subjectFrom(claims))
 		r.Header.Set("X-Jti", jtiFrom(claims))
 
@@ -158,15 +158,15 @@ func authMiddleware(keyfunc jwt.Keyfunc, issuer string, requiredRoles []string, 
 	}
 }
 
-// logAuthzDeny emits a structured `authz_deny` log line, separate from
-// accessLogMiddleware's per-request line: the latter carries status/path (403 on
-// POST /inventory/{id}/reserve) but not *why* in a queryable field. DENY-only,
-// deliberately: this is a self-reported log written by the same code whose judgment it
-// describes, so (unlike §10's Keycloak-vs-access_log jti/TOKEN_EXCHANGE cross-check) it
-// has no independent second source to verify a decision against, and can't prove a
-// PERMIT was correct -- see architecture.md §19. Its value is limited to anomaly triage
-// and support debugging, not audit. Fields mirror access_log's sub/jti/trace_id so the
-// two correlate (permission-matrix.md 表3).
+// logAuthzDenyは構造化された`authz_deny`ログ行を出力する。accessLogMiddlewareの
+// リクエストごとのログ行（status/pathを持つが「なぜ」を問い合わせ可能なフィールド
+// としては持たない、例：POST /inventory/{id}/reserveの403）とは別に出す。意図的に
+// DENYのみを記録する：これは判断を下した当のコード自身が書く自己申告ログであり
+// （§10のKeycloak対access_logのjti/TOKEN_EXCHANGE突合とは異なり）判断を検証する
+// 独立した第二のソースを持たず、PERMITが正しかったことを立証する力もない
+// （architecture.md §19参照）。その価値は異常の兆候検知とサポート用デバッグに
+// 限られ、監査ではない。フィールドはaccess_logのsub/jti/trace_idと揃えており、
+// 両者を突合できる（permission-matrix.md 表3）。
 func logAuthzDeny(ctx context.Context, claims jwt.MapClaims, reason string, requiredRoles []string) {
 	entry := struct {
 		Type          string   `json:"type"`

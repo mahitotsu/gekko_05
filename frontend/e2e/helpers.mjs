@@ -1,9 +1,10 @@
-// Shared Playwright helpers for the per-use-case e2e scripts (frontend/e2e/uc*.mjs).
-// Each script is self-contained (own browser instance, own process.exit) so it can be
-// run individually or via `npm run e2e`, mirroring the one-file-per-concern style of
-// keycloak/tests/permission-matrix.sh rather than pulling in a shared test-runner
-// framework. Login/token handling all happens server-side in the Nuxt BFF -- the
-// browser never sees an access token.
+// ユースケースごとのe2eスクリプト（frontend/e2e/uc*.mjs）が共有するPlaywright
+// ヘルパー。各スクリプトは自己完結（自前のブラウザインスタンス・自前のprocess.exit）
+// しており、個別実行でも`npm run e2e`経由でも動く。共有のテストランナー
+// フレームワークを持ち込むのではなく、keycloak/tests/permission-matrix.shと同じ
+// 「関心事ごとに1ファイル」というスタイルに倣っている。ログイン・トークンの
+// 取り扱いはすべてNuxt BFFのサーバーサイドで完結し、ブラウザがアクセストークンを
+// 目にすることは一切ない。
 import { chromium } from "playwright";
 
 export const BASE_URL = "http://localhost:3000";
@@ -25,10 +26,10 @@ export function createChecker() {
   return { check, report };
 }
 
-// Launches a browser and logs in as the given user via the real Authorization Code +
-// PKCE flow, driven through edge-proxy exactly as a real user's browser would. Returns
-// { browser, page } once the BFF session is confirmed logged-in -- caller owns
-// browser.close().
+// ブラウザを起動し、実際のAuthorization Code + PKCEフローで指定ユーザーとして
+// ログインする。実際のユーザーのブラウザと全く同じくedge-proxy経由で駆動する。
+// BFFセッションがログイン済みと確認できた時点で{ browser, page }を返す——
+// browser.close()の呼び出しは呼び出し元の責務。
 export async function loginAs(username, password = "password") {
   const browser = await chromium.launch();
   const page = await browser.newPage();

@@ -19,7 +19,8 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _jwk_thumbprint(jwk: dict) -> str:
-    # RFC 7638: SHA-256 over a JSON object with exactly these keys, in this order.
+    # RFC 7638：ちょうどこれらのキーを、この順序で持つJSONオブジェクトに対する
+    # SHA-256。
     canonical = json.dumps({"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"], "y": jwk["y"]}, separators=(",", ":"))
     digest = hashlib.sha256(canonical.encode()).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
@@ -31,13 +32,14 @@ def _base64url_sha256(value: str) -> str:
 
 
 def validate_dpop(request: Request, claims: dict, access_token: str) -> None:
-    """Validates the RFC 9449 DPoP proof for a DPoP-bound access token (cnf.jkt
-    present). Mirrors order-service's DpopValidationFilter (Java) -- see DESIGN.md
-    §11 for the same demo-scale simplification noted there (no jti replay cache).
+    """DPoP-boundなアクセストークン（cnf.jktを持つ）についてRFC 9449のDPoP Proofを
+    検証する。order-serviceのDpopValidationFilter（Java）と同じ実装であり、同様の
+    デモ規模の簡略化（jtiのリプレイキャッシュを持たない）についてはarchitecture.md
+    §11を参照。
     """
     cnf = claims.get("cnf")
     if not cnf or "jkt" not in cnf:
-        return  # token isn't DPoP-bound; nothing to check.
+        return  # DPoP-boundなトークンではないため、何も検証しない。
 
     proof = request.headers.get("DPoP")
     if not proof:

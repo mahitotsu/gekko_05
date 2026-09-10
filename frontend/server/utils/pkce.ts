@@ -6,8 +6,9 @@ export interface PendingLogin {
 }
 
 /**
- * Keyed by the OAuth `state` param. Short-lived by nature (login flow only) so a
- * plain in-memory Map is enough -- same one-container assumption as ./session.ts.
+ * OAuthの`state`パラメータをキーにする。ログインフロー中のみ生存する短命な
+ * データなので、素のインメモリMapで十分——./session.tsと同じ「コンテナ1台」
+ * という前提に基づく。
  */
 const pendingLogins = new Map<string, PendingLogin>();
 

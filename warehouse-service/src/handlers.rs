@@ -35,11 +35,11 @@ pub struct StockResponse {
     quantity: i64,
 }
 
-/// UC8/UC9 (docs/use-cases.md): "what branches can I see for this product", not "what's
-/// at branch X" -- `branches` holds exactly the set the caller may see (empty for
-/// warehouse-viewer-all when nothing anywhere has ever stocked this product; one entry
-/// for a plain warehouse-viewer; any number for warehouse-viewer-all). See
-/// get_stock_by_branches and architecture.md §20.
+/// UC8/UC9（docs/use-cases.md）：「支店Xには何があるか」ではなく「この商品について
+/// 自分にはどの支店が見えるか」を表す。`branches`は呼び出し元が見てよい支店の集合
+/// そのものになる（warehouse-viewer-allでこの商品をどこも扱ったことが無ければ空、
+/// 一般のwarehouse-viewerなら1件、warehouse-viewer-allなら任意の件数）。
+/// get_stock_by_branchesとarchitecture.md §20を参照。
 #[derive(Serialize)]
 pub struct BranchStockResponse {
     product_id: String,
@@ -51,16 +51,15 @@ pub struct ReserveRequest {
     quantity: i64,
 }
 
-/// Emits a structured `authz_deny` log line, separate from the per-request access_log
-/// line: the latter carries status/path (403 on `/warehouse/osaka/...`) but not *why*
-/// -- role missing vs. ABAC branch mismatch are indistinguishable from that alone.
-/// DENY-only, deliberately: this is a self-reported log written by the same code whose
-/// judgment it describes, so (unlike §10's Keycloak-vs-access_log jti/TOKEN_EXCHANGE
-/// cross-check) it has no independent second source to verify a decision against, and
-/// can't prove a PERMIT was correct -- see architecture.md §19. Its value is limited to
-/// anomaly triage (repeated branch_mismatch from one sub) and support debugging ("why
-/// was this order rejected"), not audit. Fields mirror access_log's sub/jti/trace_id so
-/// the two correlate in queries (permission-matrix.md 表5).
+/// リクエストごとのaccess_logとは別に、構造化された`authz_deny`ログ行を出力する。
+/// access_logはstatus/pathを持つが（例：`/warehouse/osaka/...`の403）「なぜ」までは
+/// 分からない——ロール不足なのかABACの支店不一致なのかはそれだけでは区別できない。
+/// 意図的にDENYのみを記録する：これは判断を下した当のコード自身が書く自己申告ログで
+/// あり、独立した第二のソースと突合できる§10のKeycloak対access_log突合と異なり、
+/// PERMITが正しかったことを立証する力を持たない（詳細はarchitecture.md §19）。用途は
+/// 異常の兆候検知（同一subからのbranch_mismatch連発など）とサポート用デバッグに限られ、
+/// 監査ではない。フィールドはaccess_logのsub/jti/trace_idと揃えており突合できる
+/// （permission-matrix.md 表5）。
 fn log_authz_deny(claims: &Claims, branch: &str, reason: &str, employee_branch: Option<&str>) {
     let entry = json!({
         "type": "authz_deny",
@@ -74,11 +73,12 @@ fn log_authz_deny(claims: &Claims, branch: &str, reason: &str, employee_branch: 
     println!("{}", entry);
 }
 
-/// Resolves the caller's own assigned branch via Employee Service (self-lookup keyed by
-/// preferred_username -- Keycloak subs are regenerated on every realm re-import,
-/// usernames aren't, see DESIGN.md §16). Shared by `authorize_branch` (ABAC branch-match
-/// check for the reserve path) and `get_stock_by_branches` (UC8/UC9's bulk read): both
-/// need "what branch does this warehouse-viewer belong to" for the same underlying fact.
+/// Employee Serviceを通じて呼び出し元本人の所属支店を解決する（preferred_username
+/// をキーにした自分自身の照会。Keycloakのsubはrealmを再インポートするたびに
+/// 再生成されるが、usernameは変わらないため）。`authorize_branch`（reserve経路の
+/// ABAC支店一致判定）と`get_stock_by_branches`（UC8/UC9の一括読み取り）の双方が
+/// 共有する：どちらも「このwarehouse-viewerはどの支店に属するか」という同じ事実
+/// を必要とする。
 async fn resolve_own_branch(state: &AppState, claims: &Claims, token: &str) -> Result<Option<String>, StatusCode> {
     let employee_token = state
         .token_exchange
@@ -92,10 +92,10 @@ async fn resolve_own_branch(state: &AppState, claims: &Claims, token: &str) -> R
     let username = claims.preferred_username.as_deref().unwrap_or("");
     let url = format!("{}/employees/{}", state.employee_service_base_url, username);
 
-    // No axum layer wraps outgoing calls (OtelAxumLayer only instruments the inbound
-    // side), so this is wrapped in an explicit CLIENT span by hand -- otherwise it
-    // reads to Tempo's service graph as a caller-less SERVER span on employee-service's
-    // end, same reasoning as token_exchange.rs's Keycloak call.
+    // 発信呼び出しにはaxumのレイヤーが掛からない（OtelAxumLayerは受信側のみを計装
+    // する）ため、明示的なCLIENTスパンで手動で包む。そうしないとTempoのservice
+    // graph上でemployee-service側の呼び出し元不明なSERVERスパンに見えてしまう。
+    // token_exchange.rsのKeycloak呼び出しと同じ理由。
     let span = tracing::info_span!(
         "employee_service.get",
         "otel.kind" = "client",
@@ -104,8 +104,9 @@ async fn resolve_own_branch(state: &AppState, claims: &Claims, token: &str) -> R
         "http.url" = %url,
     );
     let resp = async {
-        // Propagate the current (CLIENT) span's context to employee-service as a W3C
-        // `traceparent` header, so the two services share one distributed trace.
+        // 現在の（CLIENT）スパンのcontextをW3C `traceparent`ヘッダーとして
+        // employee-serviceへ伝播し、両サービスが1つの分散トレースを共有できる
+        // ようにする。
         let mut trace_headers = reqwest::header::HeaderMap::new();
         let cx = tracing::Span::current().context();
         global::get_text_map_propagator(|propagator| {
@@ -134,13 +135,13 @@ async fn resolve_own_branch(state: &AppState, claims: &Claims, token: &str) -> R
     Ok(employee.branch)
 }
 
-/// Two-stage authorization: warehouse-viewer/warehouse-viewer-all gates access at all
-/// (RBAC), then, unless the caller holds warehouse-viewer-all, the requested branch
-/// must match the employee's own assigned branch (ABAC). See permission-matrix.md 表5.
-/// Used by the reserve path only (`reserve_stock`), where the target branch is chosen by
-/// the product-branch mapping, not the caller -- a mismatch here is a genuine denial of
-/// a specific request, unlike the read path (`get_stock_by_branches`) where there is no
-/// caller-chosen branch to mismatch against.
+/// 二段階の認可判定：まずwarehouse-viewer/warehouse-viewer-allでアクセス可否自体を
+/// ゲートし（RBAC）、warehouse-viewer-allを持たない場合は要求された支店が本人の
+/// 所属支店と一致することを要求する（ABAC）。permission-matrix.md 表5参照。
+/// reserveの経路（`reserve_stock`）のみで使う。対象支店は商品-支店マッピングで
+/// 決まりcaller自身は選べないため、ここでの不一致はその特定リクエストへの正当な
+/// 拒否になる。読み取り経路（`get_stock_by_branches`）と異なり、呼び出し元が選んだ
+/// 支店との不一致という状況自体が存在しない。
 async fn authorize_branch(state: &AppState, claims: &Claims, branch: &str, token: &str) -> Result<(), StatusCode> {
     if !claims.has_any_role(&["warehouse-viewer", "warehouse-viewer-all"]) {
         log_authz_deny(claims, branch, "role_missing", None);
@@ -163,11 +164,12 @@ async fn authorize_branch(state: &AppState, claims: &Claims, branch: &str, token
     }
 }
 
-/// UC8/UC9 (docs/use-cases.md): "what branches can I see for this product" -- there is
-/// no caller-chosen branch in this request at all, so unlike `reserve_stock` there is no
-/// ABAC mismatch to deny; the RBAC gate (do you hold either role at all) is the only
-/// denial left, and branch-level scoping is folded honestly into the response shape
-/// (fewer/more entries in `branches`) instead. See architecture.md §20.
+/// UC8/UC9（docs/use-cases.md）：「この商品について自分にはどの支店が見えるか」を
+/// 問う。このリクエストには呼び出し元が選ぶ支店がそもそも存在しないため、
+/// `reserve_stock`と違いABACによる不一致を理由とした拒否は発生しない。残るのは
+/// RBACゲート（いずれかのロールを持っているか）のみで、支店レベルの絞り込みは
+/// 拒否ではなくレスポンスの形（`branches`の件数）に正直に反映される。
+/// architecture.md §20参照。
 pub async fn get_stock_by_branches(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -186,10 +188,10 @@ pub async fn get_stock_by_branches(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let branches = if claims.has_any_role(&["warehouse-viewer-all"]) {
-        // Discover every branch that has ever recorded stock for this product by
-        // scanning this service's own Redis keys -- the only "branch list" this service
-        // needs, and the only one it owns (no shared branch master exists anywhere in
-        // the system; see architecture.md §20's note on that).
+        // このサービス自身のRedisキーをスキャンし、この商品の在庫を記録した
+        // ことのある全支店を洗い出す——このサービスが必要とし、かつ保有する唯一の
+        // 「支店一覧」である（システム全体で共有の支店マスタは存在しない。
+        // architecture.md §20の該当箇所を参照）。
         let pattern = format!("stock:*:{product_id}");
         let keys: Vec<String> = async { conn.keys(&pattern).await.unwrap_or_default() }
             .instrument(tracing::info_span!(
@@ -214,9 +216,10 @@ pub async fn get_stock_by_branches(
         }
         branches
     } else {
-        // Plain warehouse-viewer: exactly their own branch, or an empty (not denied)
-        // result if Employee Service has no branch on file for them -- ABAC scoping is
-        // part of what this endpoint honestly answers, not a per-request denial.
+        // 一般のwarehouse-viewer：自分の所属支店のみ。Employee Serviceに支店情報が
+        // 登録されていなければ空集合を返す（拒否ではない）——ABACによる絞り込みは、
+        // このエンドポイントが正直に答える内容の一部であり、リクエスト単位の拒否
+        // ではない。
         match resolve_own_branch(&state, &claims, &token).await? {
             Some(own_branch) => {
                 let key = format!("stock:{own_branch}:{product_id}");

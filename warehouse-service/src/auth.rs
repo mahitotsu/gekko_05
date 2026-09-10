@@ -62,8 +62,8 @@ pub struct AuthContext {
     issuer: String,
     audience: String,
     http: reqwest::Client,
-    // Deduplicates concurrent refresh attempts: only one background refetch in flight
-    // at a time, regardless of how many requests hit an unknown kid simultaneously.
+    // 同時に発生した再取得の試みを重複排除する：未知のkidに当たったリクエストが
+    // 何件同時に来ても、バックグラウンドの再取得は常に1つだけ進行中になる。
     refreshing: Arc<AtomicBool>,
 }
 
@@ -81,9 +81,9 @@ async fn fetch_keys(
     Ok(keys)
 }
 
-/// Fetches Keycloak's signing keys once at startup, kept in sync afterward by
-/// `AuthContext::verify` triggering a background refetch whenever a token presents a
-/// kid we don't recognize (e.g. after Keycloak rotates its keys on a restart).
+/// Keycloakの署名鍵を起動時に一度取得する。以降は`AuthContext::verify`が、
+/// 見覚えのないkidを持つトークンに遭遇するたび（例：Keycloakが再起動で鍵を
+/// ローテーションした後）にバックグラウンド再取得をトリガーして同期を保つ。
 pub async fn build_auth_context(
     jwks_url: &str,
     issuer: &str,
@@ -102,12 +102,12 @@ pub async fn build_auth_context(
 }
 
 impl AuthContext {
-    // Deliberately synchronous (no `.await`): auth_middleware is registered via
-    // `middleware::from_fn_with_state`, whose trait-bound resolution against this
-    // repo's split axum 0.7/0.8 dependency graph (axum-tracing-opentelemetry pulls in
-    // 0.8) is fragile -- adding an extra `.await` hop here broke it in practice. Doing
-    // the actual key refetch in a spawned background task instead keeps
-    // auth_middleware's own async shape untouched.
+    // 意図的に同期関数のままにしている（`.await`を足さない）：auth_middlewareは
+    // `middleware::from_fn_with_state`経由で登録されており、本リポジトリのaxum
+    // 0.7/0.8混在の依存関係（axum-tracing-opentelemetryが0.8を引き込む）に対する
+    // トレイト境界の解決が脆く、ここに`.await`を1段足すと実際にビルドが壊れた
+    // （詳細はdocs/insights.md）。実際の鍵再取得はバックグラウンドタスクへ逃がす
+    // ことで、auth_middleware自身の非同期シグネチャには手を触れずに済ませている。
     fn verify(&self, token: &str) -> Result<Claims, String> {
         let header = decode_header(token).map_err(|e| e.to_string())?;
         let kid = header.kid.ok_or("missing kid")?;
@@ -128,10 +128,10 @@ impl AuthContext {
         Ok(data.claims)
     }
 
-    /// Rate-limited (MIN_REFRESH_INTERVAL) and deduplicated (refreshing flag), so a
-    /// stream of bogus kids can't turn this into a self-inflicted DoS against Keycloak.
-    /// The request that triggered this still sees "unknown kid" -- the refetch lands in
-    /// time for the *next* request, not this one.
+    /// レート制限(MIN_REFRESH_INTERVAL)と重複排除(refreshingフラグ)により、偽の
+    /// kidを送りつけ続けてもKeycloakへの自己誘発的なDoSにはならない。この再取得を
+    /// 引き起こしたリクエスト自身は「unknown kid」のままで、再取得の結果が反映
+    /// されるのは*次の*リクエストからになる。
     fn maybe_spawn_refresh(&self) {
         if self.keyset.read().unwrap().last_fetch.elapsed() < MIN_REFRESH_INTERVAL {
             return;
@@ -155,8 +155,9 @@ impl AuthContext {
     }
 }
 
-/// Extracts and validates the bearer token, storing its Claims as a request extension
-/// so downstream handlers can read `sub`, `preferred_username` and roles.
+/// bearerトークンを取り出して検証し、そのClaimsをリクエストのextensionとして
+/// 格納する。これにより下流のハンドラが`sub`・`preferred_username`・ロールを
+/// 読み取れるようになる。
 pub async fn auth_middleware(
     axum::extract::State(ctx): axum::extract::State<Arc<AuthContext>>,
     mut req: Request,

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Verifies the Keycloak-layer authorization rules documented in docs/permission-matrix.md.
-# Requires docker-compose.yml's stack to be running, reachable through edge-proxy on
-# localhost:3000 (Keycloak is no longer exposed on the host directly).
+# docs/permission-matrix.mdに記載されたKeycloak層の認可ルールを検証する。
+# docker-compose.ymlのスタックが起動しており、edge-proxy経由でlocalhost:3000へ
+# 到達できることが前提（Keycloakは直接ホストへ公開されなくなったため）。
 set -uo pipefail
 
 BASE_URL="http://localhost:3000"
 REALM="kikan-system"
 
-# Assertion helpers append PASS/FAIL to this file instead of a shell variable, since some
-# assertions run inside command substitution `$(...)` (a subshell) to also capture a token,
-# and a subshell cannot mutate a parent shell's variable.
+# アサーションのヘルパーは、シェル変数ではなくこのファイルへPASS/FAILを追記する。
+# 一部のアサーションはトークンも同時に取得するためコマンド置換`$(...)`（サブ
+# シェル）の中で実行され、サブシェルは親シェルの変数を変更できないため。
 RESULTS_FILE=$(mktemp)
 trap 'rm -f "$RESULTS_FILE"' EXIT
 
 decode_claim() {
-  # decode_claim <jwt> <claim_path...>  e.g. decode_claim "$tok" realm_access roles
+  # decode_claim <jwt> <claim_path...>  例: decode_claim "$tok" realm_access roles
   local tok="$1"; shift
   python3 -c "
 import sys, base64, json
@@ -34,9 +34,10 @@ print(json.dumps(node))
 }
 
 dpop_proof() {
-  # dpop_proof <htm> <htu> -- generates a proof from a fresh, throwaway EC keypair.
-  # The frontend client has dpop.bound.access.tokens=true (DESIGN.md §11), so the
-  # token endpoint now requires one on every login, not just the resource servers.
+  # dpop_proof <htm> <htu> -- 使い捨ての新規EC鍵ペアからProofを生成する。
+  # frontendクライアントはdpop.bound.access.tokens=trueを持つため
+  # （architecture.md §11）、tokenエンドポイントはリソースサーバーだけでなく
+  # ログインのたびにもDPoP Proofを要求する。
   python3 -c "
 import sys, time, uuid, base64
 import jwt
@@ -82,15 +83,16 @@ exchange() {
 }
 
 record() {
-  # record <PASS|FAIL> <message>  -- message goes to stderr so stdout stays free for callers
-  # that capture a return value via command substitution.
+  # record <PASS|FAIL> <message>  -- messageはstderrへ出す。stdoutはコマンド置換で
+  # 戻り値を受け取る呼び出し元のために空けておくため。
   echo "$1: $2" >&2
   echo "$1" >> "$RESULTS_FILE"
 }
 
 assert_exchange_success() {
   # assert_exchange_success <label> <client_id> <client_secret> <subject_token> <audience> <scope>
-  # Prints the exchanged access_token on stdout (or "" on failure) so callers can chain hops.
+  # 交換後のaccess_tokenをstdoutへ出力する（失敗時は""）。呼び出し元がホップを
+  # 連鎖させられるようにするため。
   local label="$1"; shift
   local response; response=$(exchange "$@")
   local token; token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
@@ -126,9 +128,10 @@ assert_equals() {
 
 assert_no_frontend_audience() {
   # assert_no_frontend_audience <label> <jwt>
-  # No client scope maps "frontend" as an audience, so no token issued to anyone
-  # should ever carry aud=frontend. Used for the frontend->frontend cell, where
-  # there is no exchange call to make (frontend never exchanges tokens).
+  # "frontend"をaudienceにマッピングするclient scopeは存在しないため、誰に発行
+  # されたトークンもaud=frontendを持つことは無いはずである。frontend->frontend
+  # のマスに使う：このマスにはそもそもexchange呼び出しが存在しない
+  # （frontendはトークンを交換しない）。
   local label="$1" tok="$2"
   local aud; aud=$(decode_claim "$tok" aud)
   if [ "$aud" != '"frontend"' ] && [[ "$aud" != *'"frontend"'* ]]; then
@@ -138,7 +141,7 @@ assert_no_frontend_audience() {
   fi
 }
 
-echo "=== login: role claim propagation per user ==="
+echo "=== ログイン：ユーザーごとのロールクレーム伝播 ==="
 YAMADA_TOKEN=$(get_user_token yamada-sales "openid order")
 assert_equals "yamada-sales has order-writer + inventory-writer + warehouse-viewer roles" '["inventory-writer", "order-writer", "warehouse-viewer"]' "$(decode_claim "$YAMADA_TOKEN" realm_access roles)"
 
@@ -152,9 +155,9 @@ SATO_TOKEN=$(get_user_token sato-logistics "openid order")
 assert_equals "sato-logistics has warehouse-viewer-all role" '["warehouse-viewer-all"]' "$(decode_claim "$SATO_TOKEN" realm_access roles)"
 
 echo
-echo "=== decision table 1: delegation topology (docs/permission-matrix.md, all 25 cells) ==="
+echo "=== ディシジョンテーブル1：委任トポロジー（docs/permission-matrix.md、全25マス） ==="
 
-# row: frontend (direct login; no exchange call exists for this row)
+# 行: frontend（直接ログイン。この行にexchange呼び出しは存在しない）
 assert_no_frontend_audience      "frontend            -> frontend           : DENY" "$YAMADA_TOKEN"
 assert_equals                    "frontend            -> order-service      : ALLOW" '"order-service"' "$(decode_claim "$YAMADA_TOKEN" aud)"
 TOKEN_URL="$BASE_URL/realms/$REALM/protocol/openid-connect/token"
@@ -171,29 +174,29 @@ FRONTEND_WAREHOUSE=$(curl -s -X POST "$TOKEN_URL" \
   -d "grant_type=password" -d "scope=openid warehouse")
 assert_equals "frontend            -> warehouse-service : DENY" "invalid_scope" "$(echo "$FRONTEND_WAREHOUSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))")"
 
-# row: order-service (holds a token whose aud=order-service)
+# 行: order-service（aud=order-serviceのトークンを保有）
 assert_exchange_denied           "order-service       -> frontend           : DENY" order-service order-service-secret "$YAMADA_TOKEN" frontend order
 assert_exchange_denied           "order-service       -> order-service      : DENY" order-service order-service-secret "$YAMADA_TOKEN" order-service order
 HOP1=$(assert_exchange_success   "order-service       -> inventory-service  : ALLOW" order-service order-service-secret "$YAMADA_TOKEN" inventory-service inventory)
 assert_exchange_denied           "order-service       -> warehouse-service  : DENY" order-service order-service-secret "$YAMADA_TOKEN" warehouse-service warehouse
 assert_exchange_denied           "order-service       -> employee-service   : DENY" order-service order-service-secret "$YAMADA_TOKEN" employee-service employee
 
-# row: inventory-service (holds hop1's token whose aud=inventory-service)
+# 行: inventory-service（hop1のaud=inventory-serviceトークンを保有）
 assert_exchange_denied           "inventory-service    -> frontend          : DENY" inventory-service inventory-service-secret "$HOP1" frontend inventory
 assert_exchange_denied           "inventory-service    -> order-service     : DENY" inventory-service inventory-service-secret "$HOP1" order-service order
 assert_exchange_denied           "inventory-service    -> inventory-service : DENY" inventory-service inventory-service-secret "$HOP1" inventory-service inventory
 HOP2=$(assert_exchange_success   "inventory-service    -> warehouse-service : ALLOW" inventory-service inventory-service-secret "$HOP1" warehouse-service warehouse)
 assert_exchange_denied           "inventory-service    -> employee-service  : DENY" inventory-service inventory-service-secret "$HOP1" employee-service employee
 
-# row: warehouse-service (holds hop2's token whose aud=warehouse-service)
+# 行: warehouse-service（hop2のaud=warehouse-serviceトークンを保有）
 assert_exchange_denied           "warehouse-service    -> frontend          : DENY" warehouse-service warehouse-service-secret "$HOP2" frontend warehouse
 assert_exchange_denied           "warehouse-service    -> order-service     : DENY" warehouse-service warehouse-service-secret "$HOP2" order-service order
 assert_exchange_denied           "warehouse-service    -> inventory-service : DENY" warehouse-service warehouse-service-secret "$HOP2" inventory-service inventory
 assert_exchange_denied           "warehouse-service    -> warehouse-service : DENY" warehouse-service warehouse-service-secret "$HOP2" warehouse-service warehouse
 HOP3=$(assert_exchange_success   "warehouse-service    -> employee-service  : ALLOW" warehouse-service warehouse-service-secret "$HOP2" employee-service employee)
 
-# row: employee-service (standard.token.exchange.enabled=false; every column denies for the
-# same structural reason, verified once per column using the token it legitimately holds)
+# 行: employee-service（standard.token.exchange.enabled=false。全列が同じ構造的
+# 理由で拒否される。各列とも自身が正当に保有するトークンで1回ずつ検証する）
 assert_exchange_denied           "employee-service     -> frontend          : DENY" employee-service employee-service-secret "$HOP3" frontend employee
 assert_exchange_denied           "employee-service     -> order-service     : DENY" employee-service employee-service-secret "$HOP3" order-service order
 assert_exchange_denied           "employee-service     -> inventory-service : DENY" employee-service employee-service-secret "$HOP3" inventory-service inventory
@@ -201,20 +204,20 @@ assert_exchange_denied           "employee-service     -> warehouse-service : DE
 assert_exchange_denied           "employee-service     -> employee-service  : DENY" employee-service employee-service-secret "$HOP3" employee-service employee
 
 echo
-echo "=== sub and role survive the full 3-hop chain ==="
+echo "=== subとロールが3ホップのチェーン全体を通じて維持されるか ==="
 HOP1_SUB=$(decode_claim "$HOP1" sub)
 HOP3_SUB=$(decode_claim "$HOP3" sub)
 assert_equals "sub unchanged from hop1 to hop3" "$HOP1_SUB" "$HOP3_SUB"
 assert_equals "roles still present at hop3 (employee-service)" '["inventory-writer", "order-writer", "warehouse-viewer"]' "$(decode_claim "$HOP3" realm_access roles)"
 
 echo
-echo "=== decision table 1, remaining cell: frontend -> employee-service : ALLOW ==="
-echo "(reachable directly by any logged-in user at the Keycloak layer; self-vs-any is enforced by the app layer, not yet built)"
+echo "=== ディシジョンテーブル1、残るマス：frontend -> employee-service : ALLOW ==="
+echo "（Keycloak層では、ログイン済みの誰からでも直接到達可能。自分/他人の区別はアプリ層が担い、ここでは検証しない）"
 TANAKA_EMPLOYEE_TOKEN=$(get_user_token tanaka-hr "openid employee")
 assert_equals "frontend            -> employee-service   : ALLOW" '"employee-service"' "$(decode_claim "$TANAKA_EMPLOYEE_TOKEN" aud)"
 
 PASS_COUNT=$(grep -c '^PASS$' "$RESULTS_FILE" || true)
 FAIL_COUNT=$(grep -c '^FAIL$' "$RESULTS_FILE" || true)
 echo
-echo "=== results: $PASS_COUNT passed, $FAIL_COUNT failed ==="
+echo "=== 結果: $PASS_COUNT 件成功, $FAIL_COUNT 件失敗 ==="
 [ "$FAIL_COUNT" -eq 0 ]

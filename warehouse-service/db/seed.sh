@@ -1,8 +1,8 @@
 #!/bin/sh
-# Redis has no docker-entrypoint-initdb.d equivalent, so this custom image starts
-# redis-server, seeds initial data once it's reachable, then stays in the foreground.
-# SETNX makes seeding idempotent: a restart of the same (persisted) data won't
-# clobber stock that's already been decremented by reservations.
+# Redisにはdocker-entrypoint-initdb.d相当の仕組みが無いため、このカスタムイメージ
+# はredis-serverを起動し、到達可能になったら初期データを投入したうえでフォア
+# グラウンドに留まる。SETNXにより投入は冪等になる：同じ（永続化済みの）データで
+# 再起動しても、既に引当てで減算済みの在庫を上書きしない。
 set -e
 
 redis-server --save 60 1 --dir /data &

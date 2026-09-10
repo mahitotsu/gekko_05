@@ -1,28 +1,26 @@
-// OpenTelemetry bootstrap for the Nuxt/Nitro server (the first hop in the chain).
+// Nuxt/Nitroサーバー（委任チェーンの最初のホップ）向けのOpenTelemetryブートストラップ。
 //
-// This file is loaded via Node's `--import` flag (see Dockerfile CMD) so it runs
-// and patches the runtime BEFORE Nitro/Nuxt's own module graph loads. It is
-// deliberately NOT a Nitro `server/plugins/` plugin: those run too late for
-// `--import`-based module patching to reliably beat other modules' load order.
+// このファイルはNodeの`--import`フラグ経由で読み込まれる（Dockerfile CMD参照）。
+// これによりNitro/Nuxt自身のモジュールグラフが読み込まれる前にランタイムへ
+// パッチを当てられる。意図的にNitroの`server/plugins/`プラグインにはしていない：
+// そちらは`--import`ベースのモジュールパッチが他モジュールの読み込み順に
+// 確実に先行するには実行が遅すぎる。
 //
-// It must stay plain `.mjs` (not `.ts`) because it lives outside Nitro's build
-// scan dirs and is executed directly by Node, not transpiled by the Nitro build.
+// `.ts`ではなくプレーンな`.mjs`のままにする必要がある：Nitroのビルドスキャン
+// 対象ディレクトリの外にあり、Nitroのビルドでトランスパイルされず、Nodeから
+// 直接実行されるため。
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 
-// Nitro's build output (.output/server/index.mjs) is pure ESM. HttpInstrumentation/
-// UndiciInstrumentation patch `node:http`/undici by hooking module loads via
-// `import-in-the-middle`, but that hook only intercepts CommonJS require() unless
-// it's also registered as an ESM loader -- without this, `--import` alone silently
-// leaves every core-module `import` in Nitro's own graph unpatched: no incoming-request
-// span is ever created (confirmed empirically -- ["http.createServer.__wrapped"] stayed
-// undefined and zero spans reached Tempo, even for real, non-healthcheck traffic), which
-// in turn meant frontend never extracted/forwarded edge-proxy's traceparent, so every
-// downstream call from it started as a *new* trace instead of continuing the real one.
-// See @opentelemetry/instrumentation's README ("The custom hook for ESM instrumentation
-// is --experimental-loader=@opentelemetry/instrumentation/hook.mjs") -- module.register()
-// is the modern, non-deprecated equivalent (Node 20.6+/18.19+) of that CLI flag, and
-// must run before anything else in this file imports the modules being instrumented.
+// Nitroのビルド成果物（.output/server/index.mjs）は純粋なESM。HttpInstrumentation/
+// UndiciInstrumentationは`import-in-the-middle`経由のモジュールロードフックで
+// `node:http`/undiciにパッチを当てるが、このフックはESMローダーとしても登録
+// しない限りCommonJSの`require()`しか捕まえない。これを省くと`--import`だけでは
+// Nitro自身のグラフ内の`import`が一切パッチされず、受信リクエストのスパンが
+// 生成されなくなる（実機で確認済み。詳細はdocs/insights.md）。`module.register()`
+// は@opentelemetry/instrumentationのREADMEが案内する非推奨版CLIフラグ
+// （--experimental-loader）の、非推奨ではない現代的な代替(Node 20.6+/18.19+)で
+// あり、このファイルが計装対象モジュールをimportするより前に実行する必要がある。
 register("@opentelemetry/instrumentation/hook.mjs", pathToFileURL("./"));
 
 import { NodeSDK } from "@opentelemetry/sdk-node";
@@ -32,9 +30,9 @@ import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
-// Read OTel config from process.env directly, NOT via Nitro runtimeConfig:
-// Nitro only overrides runtimeConfig from NUXT_<KEY> env vars, and these plain
-// OTEL_* names would not be picked up at runtime.
+// OTelの設定はNitroのruntimeConfig経由ではなく、process.envから直接読む：
+// NitroはNUXT_<KEY>形式の環境変数でしかruntimeConfigを上書きしないため、素の
+// OTEL_*という名前は実行時に反映されない。
 const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4318";
 const serviceName = process.env.OTEL_SERVICE_NAME || "frontend";
 
@@ -42,32 +40,33 @@ const sdk = new NodeSDK({
   resource: resourceFromAttributes({
     [ATTR_SERVICE_NAME]: serviceName,
   }),
-  // http/protobuf exporter against otel-lgtm's 4318 OTLP/HTTP port. The OTLP
-  // signal path (/v1/traces) is appended to the base endpoint.
+  // otel-lgtmの4318番（OTLP/HTTP）ポート向けのhttp/protobufエクスポーター。
+  // OTLPのシグナルパス(/v1/traces)をベースエンドポイントに付与する。
   traceExporter: new OTLPTraceExporter({
     url: `${endpoint.replace(/\/$/, "")}/v1/traces`,
   }),
-  // HttpInstrumentation: root spans for incoming requests to the Nitro/Node HTTP
-  // server. UndiciInstrumentation: spans + W3C `traceparent` injection for the
-  // outgoing native `fetch()` calls in callDownstream() to order/employee services.
-  // ignoreIncomingRequestHook skips the compose healthcheck's request to /api/me
-  // (hit every 5s). It can't be a blanket path exclusion: app.vue's own session
-  // check (`useFetch("/api/me")` on every page load) hits the same route for real,
-  // so the healthcheck is marked with an X-Health-Check header (compose.yml) instead.
+  // HttpInstrumentation：Nitro/Node HTTPサーバーへの受信リクエストのルートスパンを
+  // 生成する。UndiciInstrumentation：callDownstream()がorder/employeeサービスへ
+  // 発行するネイティブ`fetch()`呼び出しにスパンとW3C `traceparent`注入を行う。
+  // ignoreIncomingRequestHookはcomposeのヘルスチェックが叩く/api/me（5秒ごと）を
+  // 除外する。パス一律の除外にはできない：app.vue自身のセッション確認
+  // （ページ読み込みごとの`useFetch("/api/me")`）が同じルートを実際に叩くため、
+  // ヘルスチェック側にX-Health-Checkヘッダー（compose.yml）を付けて区別している。
   instrumentations: [
     new HttpInstrumentation({
       ignoreIncomingRequestHook: (req) => req.headers["x-health-check"] === "1",
     }),
     new UndiciInstrumentation(),
   ],
-  // NodeSDK's default propagator is W3C TraceContext + Baggage (verified against
-  // @opentelemetry/sdk-node 0.205.0), which is exactly the traceparent format the
-  // downstream Java/Go/Rust/Python services expect. No override needed.
+  // NodeSDKの既定のpropagatorはW3C TraceContext + Baggage
+  // （@opentelemetry/sdk-node 0.205.0で確認済み）で、下流のJava/Go/Rust/Python
+  // 各サービスが期待するtraceparent形式そのもの。上書きは不要。
 });
 
 sdk.start();
 
-// Flush spans on shutdown so in-flight traces aren't lost when the container stops.
+// シャットダウン時にスパンをflushし、コンテナ停止時に処理中のトレースが
+// 失われないようにする。
 const shutdown = () => {
   sdk.shutdown().finally(() => process.exit(0));
 };

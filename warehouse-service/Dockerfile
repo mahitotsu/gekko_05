@@ -3,11 +3,11 @@ RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY Cargo.toml ./
 COPY src ./src
-# The registry/target cache mounts persist across separate `docker build` invocations
-# (unlike a plain Docker layer), so there's no need for the classic "build a dummy
-# main.rs first" trick to warm a dependency layer -- and that trick actively broke
-# things here: cargo's fingerprinting didn't reliably detect the later COPY of the
-# real src/ as a change, so the dummy binary got reused silently.
+# registry/targetのcache mountは（通常のDockerレイヤーと異なり）個別の
+# `docker build`実行をまたいで永続化するため、依存関係レイヤーを温めるための
+# 定番の「まずダミーのmain.rsでビルドする」トリックは不要。それどころかこの
+# トリックは実害があった：cargoのフィンガープリント判定が後続の実src/のCOPYを
+# 変更として確実に検知せず、ダミーのバイナリが静かに使い回されてしまった。
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build --release && cp target/release/warehouse-service /build/warehouse-service

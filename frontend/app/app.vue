@@ -43,9 +43,10 @@ async function loadOrders() {
   try {
     orders.value = await $fetch<Order[]>("/api/orders");
   } catch (error: any) {
-    // "||", not "??": Spring Security's default 403 body is empty, which flows through
-    // as data.message === "" -- a defined-but-falsy value that "??" would keep as-is,
-    // silently hiding the error (v-if="orderError" treats "" as falsy too).
+    // "??"ではなく"||"を使う：Spring Securityの既定の403レスポンスボディは空で、
+    // data.message === ""として流れてくる——"??"だとこの「値はあるがfalsyな」空
+    // 文字列をそのまま通してしまい、エラーが静かに隠れてしまう
+    // （v-if="orderError"も""をfalsyとして扱うため）。
     orderError.value = error?.data?.message || error?.statusMessage || "Failed to load orders";
   }
 }
@@ -81,8 +82,9 @@ async function lookupWarehouseStock() {
   warehouseError.value = null;
   warehouseStock.value = null;
   try {
-    // No branch in the request: the answer is "what can I see", scoped server-side to
-    // the caller's own visibility (architecture.md §20) -- not "show me branch X".
+    // リクエストに支店を含めない：「支店Xを見せろ」ではなく「自分に何が見えるか」を
+    // 問う設計であり、サーバー側で呼び出し元自身の可視範囲に絞り込まれる
+    // （architecture.md §20）。
     warehouseStock.value = await $fetch<WarehouseStock>(`/api/warehouse-stock/${warehouseProductId.value}`);
   } catch (error: any) {
     warehouseError.value = error?.data?.message || error?.statusMessage || "Failed to look up warehouse stock";

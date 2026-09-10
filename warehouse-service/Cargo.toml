@@ -12,29 +12,29 @@ jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 redis = { version = "0.27", features = ["tokio-comp"] }
 
-# --- OpenTelemetry distributed tracing (OTLP/HTTP export, W3C traceparent) ---
-# "hyper-client" (not "reqwest-*"): opentelemetry-otlp 0.32 requires reqwest 0.13
-# for its own reqwest-based client features, but reqwest 0.13's rustls integration
-# is aws-lc-rs only (needs cmake, unlike 0.12's ring-based rustls-tls this project
-# already relies on for its own outbound calls -- see reqwest dep above). Using
-# opentelemetry-http's hyper-based client instead avoids that forced reqwest bump
-# entirely, so the app keeps TLS capability via reqwest 0.12 without adding cmake
-# to the musl/alpine Docker build.
+# --- OpenTelemetry分散トレーシング（OTLP/HTTPエクスポート、W3C traceparent） ---
+# "reqwest-*"ではなく"hyper-client"を使う：opentelemetry-otlp 0.32は自身の
+# reqwestベースクライアント機能にreqwest 0.13を要求するが、0.13のrustls統合は
+# aws-lc-rs必須（cmakeが要る）。本プロジェクトが自身の発信呼び出しで既に使って
+# いる0.12のring版rustls-tls（上のreqwest依存を参照）とは事情が異なる。代わりに
+# opentelemetry-httpのhyperベースクライアントを使うことで、このreqwestバージョン
+# 強制アップを完全に避けられる。アプリはreqwest 0.12のままTLS機能を保ち、
+# musl/alpineのDockerビルドにcmakeを持ち込まずに済む（詳細はdocs/insights.md）。
 opentelemetry = "0.32"
-# rt-tokio: the default (non-async-runtime) BatchSpanProcessor exports spans from
-# a plain OS thread with no Tokio context, which panics ("no reactor running")
-# against the hyper-based OTLP client above -- hyper needs an async runtime to
-# poll its futures. rt-tokio provides the Tokio-integrated BatchSpanProcessor used
-# in main.rs instead.
+# rt-tokio：既定（非同期ランタイム非統合）のBatchSpanProcessorは、Tokioの
+# コンテキストを持たない素のOSスレッドからスパンをエクスポートするため、上記の
+# hyperベースOTLPクライアントに対しては「no reactor running」でパニックする
+# ——hyperはfutureをpollするために非同期ランタイムを必要とする。rt-tokioは
+# main.rsで使っているTokio統合版のBatchSpanProcessorを提供する。
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "hyper-client"] }
 opentelemetry-http = "0.32"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.33"
-# tracing_level_info: axum-tracing-opentelemetry creates its per-request spans at
-# TRACE level by default (target "otel::tracing"), which RUST_LOG=info (set in the
-# Dockerfile) filters out entirely -- every request then fails to attach a parent
-# trace_id ("SpanDisabled") because the span was never actually created. This
-# feature makes it create spans at INFO instead, matching RUST_LOG=info.
+# tracing_level_info：axum-tracing-opentelemetryは既定でリクエストごとのスパンを
+# TRACEレベル（target "otel::tracing"）で生成するが、これはDockerfileで設定した
+# RUST_LOG=infoに完全にフィルタされてしまう——スパン自体が生成されないため、
+# 全リクエストで親trace_idの付与に失敗する（"SpanDisabled"）。このフィーチャーに
+# より、RUST_LOG=infoに合わせてINFOレベルでスパンを生成するようになる。
 axum-tracing-opentelemetry = { version = "0.39", features = ["tracing_level_info"] }

@@ -8,11 +8,11 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 COPY --from=build /build/.output ./.output
-# The OTel bootstrap is loaded via Node's --import BEFORE Nitro's bundle, so it is
-# NOT part of .output/. It needs the @opentelemetry/* packages as real installed
-# node_modules at runtime, so copy the whole build-stage node_modules alongside it.
-# (Copying the full tree is the least-fragile choice for this local teaching sample;
-# hand-enumerating the OTel transitive deps would be brittle.)
+# OTelブートストラップはNitroのバンドルより前にNodeの--importで読み込まれるため、
+# .output/には含まれない。実行時に@opentelemetry/*パッケージが本物のインストール
+# 済みnode_modulesとして必要なため、ビルドステージのnode_modulesを丸ごとコピー
+# して同梱する（このローカル学習用サンプルでは、全体をコピーするのが最も壊れに
+# くい選択。OTelの推移的依存を手動で列挙するのは脆い）。
 COPY --from=build /build/node_modules ./node_modules
 COPY --from=build /build/server/otel.mjs ./server/otel.mjs
 EXPOSE 3000

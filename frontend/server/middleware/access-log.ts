@@ -12,13 +12,14 @@ function jwtPayload(token: string): Record<string, unknown> {
 }
 
 export default defineEventHandler((event) => {
-  // Skip compose healthcheck probes (same header filter as otel.mjs).
+  // composeのヘルスチェックからのプローブはスキップする（otel.mjsと同じ
+  // ヘッダーによる判別）。
   if (event.node.req.headers["x-health-check"] === "1") return;
 
   const start = Date.now();
   const method = event.method;
   const path = getRequestURL(event).pathname;
-  // Capture trace_id while the OTel context is still active (before async hand-off).
+  // OTelのcontextがまだ有効なうち（非同期処理へ移る前）にtrace_idを取得する。
   const traceId = trace.getActiveSpan()?.spanContext().traceId ?? "-";
 
   const session = getBffSession(getSessionIdFromCookie(event));

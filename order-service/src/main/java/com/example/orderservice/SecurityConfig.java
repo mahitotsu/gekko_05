@@ -55,17 +55,17 @@ public class SecurityConfig {
             .oauth2ResourceServer(oauth2 -> oauth2
                 .bearerTokenResolver(dpopAwareBearerTokenResolver())
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))
-            // Must run after BearerTokenAuthenticationFilter: it needs the JWT already
-            // authenticated (to read cnf.jkt) plus the raw token value (to check ath).
+            // BearerTokenAuthenticationFilterより後段で実行する必要がある：cnf.jktを
+            // 読むにはJWTが認証済みであること、athの検証には生のトークン値が必要。
             .addFilterAfter(dpopValidationFilter, BearerTokenAuthenticationFilter.class);
         return http.build();
     }
 
     /**
-     * The frontend sends `Authorization: DPoP <token>` (the token_type Keycloak issues
-     * for a DPoP-bound token), which Spring's default resolver -- hardcoded to the
-     * "Bearer" scheme -- wouldn't recognize. This accepts either scheme for extracting
-     * the raw token; DpopValidationFilter is what actually enforces the DPoP proof.
+     * frontendは`Authorization: DPoP <token>`（Keycloakが DPoP-bound トークンに対して
+     * 発行するtoken_type）で送ってくる。Springの既定のリゾルバは"Bearer"スキームに
+     * 固定されておりこれを認識できないため、両方のスキームを受け付けて生のトークン値を
+     * 取り出す。DPoP Proofの実際の検証はDpopValidationFilterが担う。
      */
     private BearerTokenResolver dpopAwareBearerTokenResolver() {
         return request -> {
@@ -83,11 +83,12 @@ public class SecurityConfig {
     }
 
     /**
-     * JWKS is fetched from the internal docker-network hostname (order-service always
-     * talks to Keycloak over the internal network), but the expected `iss` claim is
-     * validated separately against the externally-visible issuer. Keycloak's `iss` claim
-     * reflects whatever host/port the token requester used, which for browser/host-machine
-     * clients is not the same as the internal docker hostname order-service resolves.
+     * JWKSはdockerネットワーク内部のホスト名から取得する（order-serviceは常に内部
+     * ネットワーク経由でKeycloakと通信する）が、期待する`iss`クレームの検証はこれとは
+     * 別に、外部から見えるissuer値に対して行う。Keycloakの`iss`クレームはトークンを
+     * 要求した側が使ったホスト/ポートをそのまま反映するため、ブラウザ／ホストマシン側の
+     * クライアントにとってのそれは、order-serviceが名前解決するdocker内部ホスト名とは
+     * 一致しない。
      */
     @Bean
     JwtDecoder jwtDecoder() {
@@ -116,8 +117,9 @@ public class SecurityConfig {
     }
 
     /**
-     * Maps Keycloak's realm_access.roles claim to Spring Security authorities
-     * (ROLE_xxx), so @PreAuthorize("hasRole('order-writer')") works directly.
+     * Keycloakのrealm_access.rolesクレームをSpring Securityの権限表現(ROLE_xxx)へ
+     * マッピングする。これにより@PreAuthorize("hasRole('order-writer')")がそのまま
+     * 使えるようになる。
      */
     private JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();

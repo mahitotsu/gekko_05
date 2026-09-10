@@ -5,13 +5,13 @@ interface TokenResponse {
 }
 
 /**
- * Exchanges the user's frontend-facing access token (RFC 8693) for a narrower one
- * scoped to a single downstream service, acting as the `frontend` client itself.
- * The `frontend` client is DPoP-bound (see keycloak/realm-export.json), so Keycloak
- * requires a DPoP proof on this token-endpoint call too. The exchanged token comes
- * back DPoP-bound as well (cnf.jkt carried over from the subject token, same key as
- * the original session) -- callers must present it with DPoP, not a plain Bearer
- * header; see callDownstream() in ./dpop.
+ * ユーザーのfrontend向けアクセストークン（RFC 8693）を、単一の下流サービス向けに
+ * 絞り込んだトークンへ交換する。`frontend`クライアント自身として振る舞う。
+ * `frontend`クライアントはDPoP-boundなため（keycloak/realm-export.json参照）、
+ * Keycloakはこのtokenエンドポイント呼び出しにもDPoP Proofを要求する。交換後の
+ * トークンもDPoP-boundのまま返ってくる（subject tokenからcnf.jktが引き継がれ、
+ * 元のセッションと同じ鍵になる）——呼び出し元は素のBearerヘッダーではなくDPoPで
+ * 提示する必要がある。./dpopのcallDownstream()を参照。
  */
 export async function exchangeForAudience(
   keycloakInternalUrl: string,

@@ -10,9 +10,10 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:order_service}
   jpa:
     hibernate:
-      # Schema is owned by db/init.sql (mounted into the postgres container), not by
-      # Hibernate. `validate` only checks the entity mapping matches the real schema,
-      # it never creates/alters tables. This keeps seeding/migrations explicit and SQL-native.
+      # スキーマの所有者はHibernateではなくdb/init.sql（postgresコンテナへ
+      # マウントされる）。`validate`はエンティティのマッピングが実際のスキーマと
+      # 一致するかを確認するだけで、テーブルの作成・変更は一切行わない。これに
+      # より投入データ・マイグレーションを明示的かつSQLネイティブに保てる。
       ddl-auto: validate
     open-in-view: false
 
@@ -37,8 +38,8 @@ management:
       probability: 1.0
   otlp:
     tracing:
-      # Same OTEL_EXPORTER_OTLP_ENDPOINT (base URL, no path) env var as the other
-      # 4 services -- Spring's own management.otlp.tracing.endpoint just happens to
-      # want the full /v1/traces URL, so the path suffix is appended here instead
-      # of duplicated into a Spring-only env var name.
+      # 他の4サービスと同じOTEL_EXPORTER_OTLP_ENDPOINT（パスを含まないベースURL）
+      # 環境変数を使う——Spring自身のmanagement.otlp.tracing.endpointがたまたま
+      # /v1/tracesまでのフルURLを要求するため、Spring専用の環境変数名を別途増やす
+      # のではなく、ここでパスを付与している。
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces

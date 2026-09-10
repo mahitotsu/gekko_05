@@ -33,8 +33,8 @@ public class OrderController {
     public ResponseEntity<Order> create(@RequestBody OrderCreateRequest request, @AuthenticationPrincipal Jwt jwt) {
         Order order = new Order(request.customerId(), request.productId(), request.quantity());
 
-        // Token Exchange: downscope this user's token to inventory-service's audience,
-        // then ask Inventory Service to actually reserve the stock for this order.
+        // Token Exchange：このユーザーのトークンをinventory-service向けのaudienceへ
+        // 絞り込み、実際の在庫引当てはInventory Serviceに依頼する。
         String inventoryToken = tokenExchangeClient.exchange(jwt.getTokenValue(), "inventory-service", "inventory");
         boolean reserved = inventoryClient.reserve(inventoryToken, request.productId(), request.quantity());
         order.setStatus(reserved ? OrderStatus.CONFIRMED : OrderStatus.REJECTED);

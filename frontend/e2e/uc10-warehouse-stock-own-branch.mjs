@@ -1,10 +1,11 @@
-// UC10 (docs/use-cases.md): 正常系・ABACによる絞り込み. yamada-sales (branch=tokyo,
-// warehouse-viewer, no -all) looks up product-A, which is stocked at both tokyo and
-// osaka. Unlike UC8's warehouse-viewer-all, a plain warehouse-viewer only ever sees
-// their own branch -- osaka's real stock must not appear in the response at all. This
-// is ABAC expressed as the shape of a successful (200) response, not an error
-// (architecture.md §20); contrast with UC9, which is denied the screen entirely.
-// Run: node e2e/uc10-warehouse-stock-own-branch.mjs
+// UC10（docs/use-cases.md）：正常系・ABACによる絞り込み。yamada-sales
+// （branch=tokyo、warehouse-viewer、-allは持たない）がproduct-Aを照会する。
+// この商品はtokyo・osaka両支店に在庫がある。UC8のwarehouse-viewer-allと異なり、
+// 一般のwarehouse-viewerは常に自分の所属支店しか見えない——osakaの実在庫が
+// レスポンスに一切現れてはならない。これはエラーではなく、成功(200)レスポンスの
+// 形として表現されるABACである（architecture.md §20）。画面自体を拒否される
+// UC9と対比せよ。
+// 実行: node e2e/uc10-warehouse-stock-own-branch.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

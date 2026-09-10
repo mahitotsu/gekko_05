@@ -1,7 +1,8 @@
-// UC1 (docs/use-cases.md): 正常系. An order-writer/inventory-writer/warehouse-viewer
-// persona orders a product actually stocked at their own branch, driving the real
-// 3-hop delegation chain (Order -> Inventory -> Warehouse -> Employee) to CONFIRMED.
-// Run: node e2e/uc1-order-registration.mjs
+// UC1（docs/use-cases.md）：正常系。order-writer/inventory-writer/warehouse-viewer
+// を持つペルソナが、自分の所属支店に実在庫のある商品を注文する。実際の3ホップの
+// 委任チェーン（Order -> Inventory -> Warehouse -> Employee）を駆動してCONFIRMEDに
+// 至る。
+// 実行: node e2e/uc1-order-registration.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

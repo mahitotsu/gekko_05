@@ -14,10 +14,10 @@ export interface Session {
 }
 
 /**
- * Sessions live only in this process's memory -- there is exactly one Nuxt
- * container in this sample, so no shared store (Redis etc.) is needed. This
- * also means restarting the frontend container logs everyone out, which is
- * acceptable for a local demo.
+ * セッションはこのプロセスのメモリ内にのみ存在する——本サンプルではNuxtコンテナが
+ * 常に1台だけなので、共有ストア（Redis等）は不要。これは裏を返せばfrontend
+ * コンテナを再起動すると全ユーザーがログアウトすることを意味するが、ローカル
+ * デモとしては許容範囲。
  */
 const sessions = new Map<string, Session>();
 

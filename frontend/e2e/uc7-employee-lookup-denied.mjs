@@ -1,7 +1,7 @@
-// UC7 (docs/use-cases.md): 異常系・権限不足. yamada-sales (no hr-viewer) attempts to
-// look up another employee's info and is denied by Employee Service -- the same
-// "front-door RBAC" denial shape as UC3, surfacing as an HTTP error to the BFF.
-// Run: node e2e/uc7-employee-lookup-denied.mjs
+// UC7（docs/use-cases.md）：異常系・権限不足。yamada-sales（hr-viewerを持たない）が
+// 他の社員の情報照会を試み、Employee Serviceに拒否される——UC3と同じ「入口での
+// RBAC」拒否の形であり、BFFへHTTPエラーとして表面化する。
+// 実行: node e2e/uc7-employee-lookup-denied.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

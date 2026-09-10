@@ -38,9 +38,9 @@ public class AccessLogInterceptor implements HandlerInterceptor {
             jti = token.getToken().getId() != null ? token.getToken().getId() : "-";
         }
 
-        // traceId is in MDC as "traceId" (micrometer naming). Explicitly add "trace_id"
-        // to match the snake_case naming used by inventory/warehouse/frontend services,
-        // enabling consistent LogQL queries across all services.
+        // traceIdはMDCに"traceId"（micrometerの命名）として入っている。inventory/
+        // warehouse/frontendの各サービスが使うsnake_case命名に合わせて明示的に
+        // "trace_id"として追加し、全サービス横断で一貫したLogQLクエリを可能にする。
         String traceId = MDC.get("traceId");
         log.atInfo()
             .addKeyValue("type", "access_log")

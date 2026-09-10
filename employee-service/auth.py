@@ -7,8 +7,8 @@ AUDIENCE = "employee-service"
 
 
 class AuthContext:
-    """Wraps PyJWT's JWKS client (handles fetching/caching Keycloak's signing keys)
-    plus the issuer/audience this service expects."""
+    """PyJWTのJWKSクライアント（Keycloakの署名鍵の取得・キャッシュを担う）と、
+    このサービスが期待するissuer/audienceをまとめて保持する。"""
 
     def __init__(self, jwks_url: str, issuer: str):
         self.jwk_client = jwt.PyJWKClient(jwks_url)
@@ -26,8 +26,8 @@ class AuthContext:
 
 
 def get_claims(request: Request) -> dict:
-    """FastAPI dependency: validates the bearer token (and, if it's DPoP-bound, the
-    accompanying DPoP proof) and returns its claims."""
+    """FastAPIのdependency：bearerトークンを検証し（DPoP-boundなら付随するDPoP
+    Proofも検証し）、そのクレームを返す。"""
     auth_header = request.headers.get("Authorization", "")
     scheme, _, token = auth_header.partition(" ")
     if scheme not in ("Bearer", "DPoP") or not token:

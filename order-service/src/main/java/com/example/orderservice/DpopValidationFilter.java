@@ -21,13 +21,14 @@ import java.util.Base64;
 import java.util.Map;
 
 /**
- * Validates the RFC 9449 DPoP proof for requests carrying a DPoP-bound access token
- * (cnf.jkt claim present). Runs after JWT authentication, since it needs both the raw
- * bearer token (to check `ath`) and the authenticated JWT's `cnf.jkt` claim.
+ * DPoP-boundなアクセストークン（cnf.jktクレームを持つ）が付いたリクエストについて、
+ * RFC 9449のDPoP Proofを検証する。JWT認証の後段で実行する：生のbearerトークン値
+ * （`ath`の検証用）と、認証済みJWTの`cnf.jkt`クレームの両方が必要なため。
  *
- * Demo-scale simplification: no `jti` replay cache, so a captured (proof, token) pair
- * could be replayed within the ~60s iat window this checks. A production system would
- * track seen `jti`s (e.g. in Redis with a TTL matching the window) to close that gap.
+ * デモ規模での簡略化：`jti`のリプレイキャッシュを持たないため、捕捉された
+ * (proof, token)のペアはここで検証している約60秒のiatウィンドウ内であれば再送
+ * されうる。本番システムでは、見たことのある`jti`を（例えばこのウィンドウに合わせた
+ * TTLでRedisに）記録し、この穴を塞ぐ必要がある。
  */
 @Component
 public class DpopValidationFilter extends OncePerRequestFilter {
@@ -47,7 +48,7 @@ public class DpopValidationFilter extends OncePerRequestFilter {
         Jwt jwt = jwtAuth.getToken();
         Map<String, Object> cnf = jwt.getClaim("cnf");
         if (cnf == null || cnf.get("jkt") == null) {
-            // Token isn't DPoP-bound; nothing to check here.
+            // DPoP-boundなトークンではないため、ここでは何も検証しない。
             chain.doFilter(request, response);
             return;
         }

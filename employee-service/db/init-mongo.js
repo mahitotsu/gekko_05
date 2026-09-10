@@ -1,8 +1,8 @@
-// MongoDB's official image runs any .js file found in /docker-entrypoint-initdb.d/
-// automatically on first startup (when the data directory is empty), the same
-// mechanism as postgres/mysql's init scripts -- no custom Dockerfile needed here,
-// unlike Redis.
-// DB name matches this compose service's own name -- see main.py's MongoClient call.
+// MongoDBの公式イメージは、初回起動時（データディレクトリが空の場合）に
+// /docker-entrypoint-initdb.d/にある.jsファイルを自動実行する。postgres/mysqlの
+// initスクリプトと同じ仕組みであり、Redisと違ってここでは専用Dockerfileが不要。
+// DB名はこのcomposeサービス自身の名前に合わせている——main.pyのMongoClient
+// 呼び出しを参照。
 db = db.getSiblingDB("employee-mongo");
 
 db.employees.insertMany([

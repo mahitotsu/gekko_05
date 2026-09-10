@@ -1,25 +1,27 @@
 services:
   otel-lgtm:
-    # All-in-one Grafana + Tempo (traces) + Loki + Prometheus/Mimir image. Only
-    # traces (via Tempo) are used here -- no metrics instrumentation or dashboards
-    # are built. One OTLP endpoint (4318 HTTP / 4317 gRPC), zero extra config.
+    # Grafana + Tempo（トレース）+ Loki + Prometheus/Mimirが1つに統合された
+    # オールインワンイメージ。ここではトレース（Tempo経由）のみを使う——メトリクス
+    # 計装やダッシュボード構築は行わない。OTLPエンドポイントは1つ（4318番HTTP /
+    # 4317番gRPC）で、追加設定は不要。
     image: grafana/otel-lgtm:latest
-    # Documents the container's listening ports in `docker compose ps` (matching
-    # the other services, which get this from their own Dockerfiles' EXPOSE) --
-    # this image's Dockerfile doesn't declare EXPOSE, so nothing shows without this.
-    # Purely informational: no ports: mapping, so nothing is published to the host.
+    # `docker compose ps`にこのコンテナの待受ポートを記録する（他サービスは
+    # 自身のDockerfileのEXPOSEからこれを得ているのと揃える）——このイメージの
+    # Dockerfileは EXPOSE を宣言していないため、これが無いと何も表示されない。
+    # 純粋に情報表示用：ports:マッピングは無いので、ホストへは何も公開されない。
     expose:
       - "3000"
       - "3100"
       - "4317"
       - "4318"
     environment:
-      # Served under edge-proxy's /grafana/ path instead of its own host port, to
-      # keep only one port (3000, via edge-proxy) open on the host.
+      # 自身のホストポートではなくedge-proxyの/grafana/パス配下で提供する。
+      # ホストに開けるポートをedge-proxy経由の1つ（3000）だけに保つため。
       GF_SERVER_ROOT_URL: http://localhost:3000/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     healthcheck:
-      # This image ships curl, not wget (unlike the other services' base images).
+      # このイメージはwgetではなくcurlを同梱している（他サービスのベース
+      # イメージとは異なる）。
       test: ["CMD", "curl", "-sf", "http://localhost:3000/api/health"]
       interval: 5s
       timeout: 5s
@@ -41,45 +43,47 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      # Pin the issuer so it's identical whether a client reaches Keycloak via the
-      # docker-internal hostname (other services) or via edge-proxy (host machine,
-      # browser). Without this, Keycloak computes its issuer from the connecting
-      # request's Host header, so a token minted via one path gets rejected as
-      # "Invalid token" when presented back over the other (e.g. during Token
-      # Exchange's subject_token validation). Keycloak is no longer exposed on the
-      # host directly -- edge-proxy is the only public entry point (see docs/DESIGN.md).
+      # issuerを固定し、クライアントがdocker内部のホスト名（他サービス）経由で
+      # Keycloakへ到達する場合とedge-proxy（ホストマシン、ブラウザ）経由で到達
+      # する場合とで同じ値になるようにする。これが無いとKeycloakは接続してきた
+      # リクエストのHostヘッダーからissuerを動的に算出するため、一方の経路で
+      # 発行されたトークンをもう一方の経路で提示すると"Invalid token"として拒否
+      # される（例：Token Exchangeのsubject_token検証時）。Keycloakはもはやホスト
+      # へ直接公開されておらず、edge-proxyが唯一の公開入口である
+      # （architecture.md §17参照）。
       KC_HOSTNAME: http://localhost:3000
-      # Mirrors the other services' OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT
-      # pair (see keycloak/Dockerfile for why this is runtime env, not a build step).
-      # KC_TRACING_ENDPOINT defaults to gRPC on :4317, which is what otel-lgtm exposes
-      # alongside its :4318 HTTP endpoint.
+      # 他サービスのOTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINTのペアと同じ扱い
+      # （ビルドステップではなく実行時環境変数にしている理由はkeycloak/Dockerfile
+      # 参照）。KC_TRACING_ENDPOINTは既定でgRPCの:4317番を指す。otel-lgtmは
+      # :4318番のHTTPエンドポイントと並んでこれも公開している。
       KC_TRACING_ENABLED: "true"
       KC_TRACING_SERVICE_NAME: keycloak
       KC_TRACING_ENDPOINT: http://otel-lgtm:4317
-      # Exposes /health/ready etc. on the separate management port (9000 by default),
-      # used below and by edge-proxy's /internal/keycloak-health instead of reusing a
-      # realm endpoint for the healthcheck -- and, unlike a realm endpoint, requests to
-      # it are excluded from tracing automatically (Quarkus's
-      # quarkus.otel.traces.suppress-non-application-uris, on by default, covers its
-      # own health/metrics endpoints; a past bug where enabling the management
-      # interface defeated this suppression was fixed in Quarkus 3.15.4, well below
-      # the 3.27.1 this Keycloak version bundles -- verified empirically).
+      # 別のmanagementポート（既定9000番）で/health/ready等を公開する。以下と
+      # edge-proxyの/internal/keycloak-healthはこれを使い、ヘルスチェックのために
+      # realmエンドポイントを間借りしない——realmエンドポイントと異なり、この
+      # ポートへのリクエストは自動的にトレース対象から除外される（Quarkusの
+      # quarkus.otel.traces.suppress-non-application-uris、既定で有効、自身の
+      # health/metricsエンドポイントをカバーする。managementインターフェースの
+      # 有効化がこの抑制を無効化してしまう過去のバグはQuarkus 3.15.4で修正済みで、
+      # このKeycloakバージョンが同梱する3.27.1より十分古い——実機で確認済み）。
       KC_HEALTH_ENABLED: "true"
-      # jboss-logging event listener's default success-level is DEBUG, invisible at
-      # the default INFO root log level -- confirmed empirically: with this unset,
-      # LOGIN/TOKEN_EXCHANGE success events never appeared in `docker logs`, while
-      # *_ERROR events (logged at WARN) did. Error level is already WARN by default,
-      # so only success-level needs raising here.
+      # jboss-logging event listenerの成功イベントの既定ログレベルはDEBUGで、
+      # 既定のINFOルートログレベルでは見えない——実機で確認済み：これを未設定の
+      # ままだとLOGIN/TOKEN_EXCHANGEの成功イベントは`docker logs`に一切現れず、
+      # 一方*_ERRORイベント（WARNで出力）は現れた。エラーレベルは既定で既に
+      # WARNなので、ここでは成功レベルのみ引き上げれば足りる。
       KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: "info"
     depends_on:
       otel-lgtm:
         condition: service_healthy
     healthcheck:
-      # No curl/wget in this image, but bash is available: use its /dev/tcp feature.
-      # /health/ready (management port 9000, from --health-enabled=true in the
-      # Dockerfile) reports readiness -- including having finished --import-realm,
-      # since that runs as part of startup before Quarkus marks the app ready --
-      # without reusing a realm endpoint the way the old /realms/master/... check did.
+      # このイメージにcurl/wgetは無いが、bashは使えるので/dev/tcp機能を使う。
+      # /health/ready（managementポート9000番、Dockerfileの--health-enabled=true
+      # 由来）はreadinessを報告する——--import-realmの完了も含む。これは
+      # Quarkusがアプリをready扱いにする前の起動処理の一部として実行されるため。
+      # 旧来の/realms/master/...チェックのようにrealmエンドポイントを間借り
+      # しない。
       test:
         - CMD
         - bash
@@ -96,12 +100,12 @@ services:
   order-postgres:
     image: postgres:16
     environment:
-      # DB name matches this compose service's own name, not order_service (which is
-      # kept only for POSTGRES_USER/PASSWORD, i.e. credentials, not a display name) --
-      # avoids the JDBC db.namespace span attribute (this is what order-service's
-      # datasource-micrometer-spring-boot reports, unlike inventory-service/warehouse-service
-      # which have a free-form attribute to set explicitly) rendering as a Tempo service
-      # graph node that reads confusingly like the order-service app itself.
+      # DB名はorder_service（POSTGRES_USER/PASSWORD、つまり認証情報としてのみ
+      # 残しており、表示名ではない）ではなく、このcomposeサービス自身の名前に
+      # 合わせている——JDBCのdb.namespaceスパン属性（order-serviceの
+      # datasource-micrometer-spring-bootが報告する値。任意の属性を明示設定できる
+      # inventory-service/warehouse-serviceとは異なる）が、Tempoのservice graph上で
+      # order-serviceアプリ自身と紛らわしいノードとして表示されるのを避けるため。
       POSTGRES_DB: order-postgres
       POSTGRES_USER: order_service
       POSTGRES_PASSWORD: order_service
@@ -245,8 +249,8 @@ services:
   frontend:
     build: ./frontend
     environment:
-      # Nitro (Nuxt's server engine) only overrides runtimeConfig entries at startup
-      # from NUXT_<KEY> env vars -- see nuxt.config.ts.
+      # Nitro（Nuxtのサーバーエンジン）は起動時、NUXT_<KEY>形式の環境変数からしか
+      # runtimeConfigの項目を上書きしない——nuxt.config.ts参照。
       NUXT_KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
       NUXT_KEYCLOAK_PUBLIC_URL: http://localhost:3000/realms/kikan-system
       NUXT_FRONTEND_CLIENT_SECRET: frontend-secret
@@ -262,9 +266,10 @@ services:
       otel-lgtm:
         condition: service_healthy
     healthcheck:
-      # /api/me is also hit for real by app.vue's own session check, so it's marked
-      # with X-Health-Check here and filtered out by otel.mjs's ignoreIncomingRequestHook
-      # -- otherwise this 5s-interval probe would flood the service graph with noise.
+      # /api/meはapp.vue自身のセッション確認からも実際に叩かれるため、ここでは
+      # X-Health-Checkを付けてotel.mjsのignoreIncomingRequestHookで除外している
+      # ——そうしないとこの5秒間隔のプローブがservice graphをノイズで
+      # 埋め尽くしてしまう。
       test: ["CMD", "wget", "-q", "-O", "-", "--header=X-Health-Check: 1", "http://localhost:3000/api/me"]
       interval: 5s
       timeout: 5s
@@ -283,9 +288,10 @@ services:
       otel-lgtm:
         condition: service_healthy
     healthcheck:
-      # 127.0.0.1, not localhost: nginx's `listen 3000;` binds IPv4 only, but this
-      # container's /etc/hosts resolves "localhost" to ::1 first, which wget tries
-      # and gets refused on before ever falling back to the IPv4 address.
+      # localhostではなく127.0.0.1を使う：nginxの`listen 3000;`はIPv4のみで
+      # bindしているが、このコンテナの/etc/hostsは"localhost"をまず::1
+      # （IPv6）で解決し、wgetはそちらを試みて拒否されてからでないとIPv4へ
+      # フォールバックしないため。
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/internal/keycloak-health"]
       interval: 5s
       timeout: 5s

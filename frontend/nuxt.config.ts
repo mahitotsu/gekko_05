@@ -7,11 +7,12 @@ export default defineNuxtConfig({
     port: 3000,
   },
   runtimeConfig: {
-    // Server-only (not prefixed with `public`, so never exposed to the browser bundle).
-    // These are just local-dev fallback values -- Nitro overrides each one at server
-    // startup (not build time) from the matching NUXT_<KEY> env var, e.g.
-    // NUXT_KEYCLOAK_INTERNAL_URL (see compose.yml). Plain, unprefixed env vars are
-    // NOT picked up here since nuxt.config.ts itself only runs at build time.
+    // サーバー専用（`public`プレフィックスが無いためブラウザバンドルには一切
+    // 露出しない）。ここにあるのはローカル開発用のフォールバック値に過ぎない
+    // ——Nitroはサーバー起動時（ビルド時ではない）に、対応するNUXT_<KEY>形式の
+    // 環境変数（例: NUXT_KEYCLOAK_INTERNAL_URL、compose.yml参照）で各値を上書き
+    // する。nuxt.config.ts自体はビルド時にしか実行されないため、プレフィックスの
+    // 無い素の環境変数はここでは反映されない。
     keycloakInternalUrl: "http://localhost:8080/realms/kikan-system",
     keycloakPublicUrl: "http://localhost:3000/realms/kikan-system",
     frontendClientSecret: "frontend-secret",

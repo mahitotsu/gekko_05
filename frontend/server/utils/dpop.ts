@@ -13,11 +13,11 @@ function base64UrlSha256(value: string): string {
 }
 
 /**
- * Builds an RFC 9449 DPoP proof for a request the BFF is about to make on the
- * user's behalf (to Keycloak's token endpoint, or to a resource server holding the
- * DPoP-bound access token). Mirrors what the browser-side oidc-client-ts used to do
- * before the BFF migration (DESIGN.md §19/§22) -- the key pair now lives server-side
- * instead, so it's never exposed to browser JS at all.
+ * BFFがユーザーに代わってこれから行うリクエスト（Keycloakのtokenエンドポイント
+ * 宛、あるいはDPoP-boundなアクセストークンを受け取るリソースサーバー宛）向けに
+ * RFC 9449のDPoP Proofを組み立てる。BFF化（architecture.md §17）以前はブラウザ側の
+ * oidc-client-tsが行っていたのと同じ処理だが、鍵ペアは今やサーバーサイドにのみ
+ * 存在し、ブラウザのJSに公開されることは一切ない。
  */
 export async function createDPoPProof(
   keyPair: DPoPKeyPair,
@@ -43,9 +43,9 @@ export async function createDPoPProof(
 }
 
 /**
- * Calls a downstream resource server with a DPoP-bound access token. Token Exchange
- * carries the `cnf.jkt` binding forward from the subject token (same key as the
- * session's original login), so this must reuse that same key pair, not a fresh one.
+ * DPoP-boundなアクセストークンで下流のリソースサーバーを呼び出す。Token Exchangeは
+ * subject tokenから`cnf.jkt`の紐付けをそのまま引き継ぐ（セッションの元のログイン
+ * 時と同じ鍵）ため、ここでも新しい鍵ペアではなく同じ鍵ペアを再利用する必要がある。
  */
 export async function callDownstream(
   keyPair: DPoPKeyPair,

@@ -29,13 +29,13 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-// initTracer configures an OTLP/HTTP span exporter and registers a global tracer
-// provider plus a W3C trace-context propagator, so incoming traceparent headers are
-// extracted and outgoing calls carry the trace forward. It returns a shutdown func.
+// initTracerはOTLP/HTTPのスパンエクスポーターを構成し、グローバルなtracer providerと
+// W3C trace-contextのpropagatorを登録する。これにより受信したtraceparentヘッダーが
+// 抽出され、発信呼び出しにもトレースが引き継がれる。シャットダウン用の関数を返す。
 func initTracer(ctx context.Context) (func(context.Context) error, error) {
-	// OTEL_EXPORTER_OTLP_ENDPOINT is a base URL (same env var as the other 4
-	// services). WithEndpointURL, unlike WithEndpoint, does NOT append /v1/traces
-	// automatically (see otlptracehttp's own doc.go) -- append it explicitly.
+	// OTEL_EXPORTER_OTLP_ENDPOINTはベースURL（他の4サービスと共通の環境変数名）。
+	// WithEndpointURLはWithEndpointと異なり/v1/tracesを自動付与しない
+	// （otlptracehttp自身のdoc.go参照）ため、明示的に付与する。
 	endpoint := getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	serviceName := getenv("OTEL_SERVICE_NAME", "inventory-service")
 
@@ -62,9 +62,9 @@ func initTracer(ctx context.Context) (func(context.Context) error, error) {
 	return tp.Shutdown, nil
 }
 
-// traceIDFromContext reads the active OTel span's trace id out of ctx, or "-" if none
-// is present. Shared by accessLogMiddleware and authMiddleware's authz_decision
-// logging so both log lines carry the same trace_id for a given request.
+// traceIDFromContextはctxから現在有効なOTelスパンのtrace idを取り出す。無ければ"-"を
+// 返す。accessLogMiddlewareとauthMiddlewareのauthz_denyログの両方で共有し、同じ
+// リクエストに対する両ログ行が同じtrace_idを持つようにする。
 func traceIDFromContext(ctx context.Context) string {
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
@@ -73,7 +73,7 @@ func traceIDFromContext(ctx context.Context) string {
 	return "-"
 }
 
-// responseWriter captures the HTTP status code written by the handler.
+// responseWriterはハンドラが書き込んだHTTPステータスコードを記録する。
 type responseWriter struct {
 	http.ResponseWriter
 	status int
@@ -84,8 +84,8 @@ func (rw *responseWriter) WriteHeader(status int) {
 	rw.ResponseWriter.WriteHeader(status)
 }
 
-// accessLogMiddleware logs one JSON line per request with trace_id and sub.
-// Must be placed INSIDE otelhttp so r.Context() carries the active OTel span.
+// accessLogMiddlewareはリクエストごとにtrace_idとsubを含むJSON1行をログ出力する。
+// r.Context()が有効なOTelスパンを持つよう、otelhttpの内側に配置する必要がある。
 func accessLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
@@ -136,13 +136,13 @@ func main() {
 	dsn := getenv("MYSQL_DSN", "inventory_service:inventory_service@tcp(localhost:3306)/inventory_service")
 	warehouseBaseURL := getenv("WAREHOUSE_SERVICE_BASE_URL", "http://localhost:8083")
 
-	// otelsql.Open wraps sql.Open, tracing every database/sql call that takes a
-	// context (the DB name shows up as its own node in Tempo's service graph,
-	// analogous to how Keycloak's/employee-service's own DB calls already do).
-	// DBNamespace is purely a reporting label (independent of the real MySQL db name
-	// in dsn above) -- set to match this compose service's own name ("inventory-mysql"),
-	// not "inventory_service", so the node doesn't read as a confusing near-twin of
-	// this service's own "inventory-service" node in the graph.
+	// otelsql.Openはsql.Openをラップし、contextを受け取るdatabase/sql呼び出しをすべて
+	// トレースする（DB名はTempoのservice graph上で独自のノードとして表示される。
+	// Keycloak/employee-service自身のDB呼び出しが既にそうなっているのと同じ扱い）。
+	// DBNamespaceは純粋な表示用ラベルで（上のdsnにある実際のMySQL DB名とは独立）、
+	// "inventory_service"ではなくこのcomposeサービス自身の名前("inventory-mysql")に
+	// 合わせている。こうしないと、graph上でこのサービス自身の"inventory-service"
+	// ノードと紛らわしい"双子"に見えてしまう。
 	db, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(
 		semconv.DBSystemMySQL,
 		semconv.DBNamespace("inventory-mysql"),
@@ -170,20 +170,20 @@ func main() {
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-reader", "inventory-writer"}, handlers.getProduct))
 	mux.HandleFunc("POST /inventory/{id}/reserve",
 		authMiddleware(keyfunc, keycloakIssuer, []string{"inventory-writer"}, handlers.reserve))
-	// No required roles (nil, not inventory-reader/-writer, and deliberately not
-	// warehouse-viewer/-all either): branch access is Warehouse Service's domain alone
-	// (services.md: it's the "組織的に独立した拠点システム"; Inventory Service is only a
-	// "集計・ルーティング層" that explicitly does not do branch-level access control).
-	// No {branch} in the path either -- the request is "what can I see for this
-	// product", not "show me branch X" -- see docs/use-cases.md UC8/UC9 and
-	// architecture.md §20.
+	// requiredRolesはnil（inventory-reader/-writerではなく、意図的にwarehouse-viewer/
+	// -allでもない）：支店アクセスはWarehouse Service単独の領域である（services.md：
+	// 「組織的に独立した拠点システム」。Inventory Serviceは支店レベルのアクセス制御を
+	// 明示的に行わない「集計・ルーティング層」に過ぎない）。パスに{branch}も持たない
+	// ——「この商品について自分に何が見えるか」を問うのであって「支店Xを見せろ」では
+	// ない。docs/use-cases.md UC8/UC9とarchitecture.md §20を参照。
 	mux.HandleFunc("GET /warehouse-stock/{productId}",
 		authMiddleware(keyfunc, keycloakIssuer, nil, handlers.getWarehouseStock))
 
 	log.Println("inventory-service listening on :8082")
-	// accessLogMiddleware is placed inside otelhttp so r.Context() carries the active
-	// OTel span, enabling trace_id extraction. WithFilter still excludes /health from
-	// span creation; accessLogMiddleware also skips /health logging for the same reason.
+	// accessLogMiddlewareはotelhttpの内側に配置し、r.Context()が有効なOTelスパンを
+	// 持つようにしてtrace_idを抽出できるようにする。WithFilterは引き続き/healthを
+	// スパン生成から除外しており、同じ理由でaccessLogMiddleware側も/healthのログを
+	// スキップする。
 	otelHandler := otelhttp.NewHandler(accessLogMiddleware(mux), "inventory-service", otelhttp.WithFilter(func(r *http.Request) bool {
 		return r.URL.Path != "/health"
 	}))

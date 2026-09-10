@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// TokenExchangeClient performs RFC 8693 Token Exchange as inventory-service's own
-// confidential client, downscoping a subject token to a narrower audience/scope.
+// TokenExchangeClientはinventory-service自身の機密クライアントとしてRFC 8693
+// Token Exchangeを実行し、subject tokenをより狭いaudience/scopeへ絞り込む。
 type TokenExchangeClient struct {
 	tokenEndpoint string
 	clientID      string

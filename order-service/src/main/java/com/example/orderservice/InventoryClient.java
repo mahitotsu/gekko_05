@@ -1,13 +1,14 @@
 package com.example.orderservice;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatusCode;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 /**
- * Calls Inventory Service's reservation endpoint using a token already
- * exchanged (by TokenExchangeClient) for inventory-service's audience.
+ * TokenExchangeClientが既にinventory-service向けaudienceへ交換済みのトークンを使い、
+ * Inventory Serviceの引当てエンドポイントを呼び出す。
  */
 @Component
 public class InventoryClient {
@@ -17,9 +18,9 @@ public class InventoryClient {
     public InventoryClient(
             @Value("${app.inventory-service.base-url}") String baseUrl,
             RestClient.Builder restClientBuilder) {
-        // Use Spring's auto-configured RestClient.Builder (wired with Micrometer's
-        // ObservationRegistry) so outgoing calls get auto-instrumented OTel spans and
-        // W3C traceparent propagation, instead of a fresh RestClient.builder().
+        // Spring が自動構成する RestClient.Builder（Micrometer の ObservationRegistry が
+        // 組み込み済み）を使う。発信呼び出しが自動計装のOTelスパンとW3C traceparent
+        // 伝播を持つようにするためで、素の RestClient.builder() は使わない。
         this.restClient = restClientBuilder.baseUrl(baseUrl).build();
     }
 
@@ -27,7 +28,7 @@ public class InventoryClient {
     }
 
     /**
-     * @return true if the reservation succeeded, false if stock was insufficient (409).
+     * @return 引当てに成功した場合はtrue、在庫不足(409)の場合はfalse。
      */
     public boolean reserve(String inventoryToken, String productId, int quantity) {
         try {
@@ -38,8 +39,8 @@ public class InventoryClient {
                 .retrieve()
                 .toBodilessEntity();
             return true;
-        } catch (org.springframework.web.client.HttpClientErrorException e) {
-            if (e.getStatusCode() == HttpStatusCode.valueOf(409)) {
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode() == HttpStatus.CONFLICT) {
                 return false;
             }
             throw e;
@@ -47,12 +48,12 @@ public class InventoryClient {
     }
 
     /**
-     * Passthrough for the branches (of this product) the caller may see (UC8/UC9) --
-     * no branch parameter, since the request is "what can I see", not "show me branch
-     * X" (architecture.md §20). Any non-2xx response (e.g. Warehouse Service's 403 for
-     * holding neither warehouse-viewer role at all) is left to throw
-     * HttpClientErrorException -- the caller relays it as-is, since this read has no
-     * business-state outcome to hide behind, unlike reserve()'s 409 handling above.
+     * 呼び出し元が閲覧可能な支店（この商品について、UC8/UC9）をそのまま中継する。
+     * 「支店Xを見せろ」ではなく「自分に何が見えるか」を問う設計のため支店パラメータは
+     * 持たない（architecture.md §20）。2xx以外のレスポンス（例：warehouse-viewer系の
+     * ロールを一切持たない場合のWarehouse Serviceの403）はHttpClientErrorException
+     * としてそのままthrowさせる。上のreserve()の409処理と異なり、この照会には裏に
+     * 隠すべき業務上の結果が無いため、呼び出し元はエラーをそのまま中継すればよい。
      */
     public String getWarehouseStock(String inventoryToken, String productId) {
         return restClient.get()

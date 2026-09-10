@@ -9,8 +9,8 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 /**
- * Performs RFC 8693 Token Exchange as order-service's own confidential client,
- * downscoping a user's token to a narrower audience/scope for a downstream call.
+ * order-service自身の機密クライアントとしてRFC 8693 Token Exchangeを実行し、
+ * ユーザーのトークンを下流呼び出し向けのより狭いaudience/scopeへ絞り込む。
  */
 @Component
 public class TokenExchangeClient {
@@ -27,9 +27,9 @@ public class TokenExchangeClient {
             @Value("${app.order-service.client-id}") String clientId,
             @Value("${app.order-service.client-secret}") String clientSecret,
             RestClient.Builder restClientBuilder) {
-        // Use Spring's auto-configured RestClient.Builder (wired with Micrometer's
-        // ObservationRegistry) so the token-exchange call to Keycloak gets an
-        // auto-instrumented OTel span, instead of a fresh RestClient.builder().
+        // Spring が自動構成する RestClient.Builder（Micrometer の ObservationRegistry が
+        // 組み込み済み）を使う。KeycloakへのToken Exchange呼び出しが自動計装のOTel
+        // スパンを持つようにするためで、素の RestClient.builder() は使わない。
         this.restClient = restClientBuilder
             .baseUrl(keycloakInternalUrl + "/protocol/openid-connect/token")
             .build();

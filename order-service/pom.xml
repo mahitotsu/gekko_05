@@ -43,8 +43,8 @@
       <scope>runtime</scope>
     </dependency>
 
-    <!-- OpenTelemetry distributed tracing (auto-instrumented HTTP server + RestClient spans,
-         exported via OTLP HTTP; W3C traceparent propagation). -->
+    <!-- OpenTelemetry分散トレーシング（HTTPサーバー + RestClientの自動計装スパンを
+         OTLP HTTPでエクスポート。W3C traceparent伝播）。 -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
@@ -57,12 +57,12 @@
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-exporter-otlp</artifactId>
     </dependency>
-    <!-- JDBC-level spans (PostgreSQL). micrometer-tracing-bridge-otel above only covers
-         HTTP server + RestClient by default; this adds a Micrometer Observation
-         instrumentation for the DataSource itself, auto-configured onto the existing
-         DataSource bean, bridged to OTel through the same tracing bridge (no separate
-         opentelemetry-specific artifact needed). 1.x line targets Spring Boot 3.x
-         (2.x targets Spring Boot 4.x); see jdbc-observations/datasource-micrometer. -->
+    <!-- JDBCレベルのスパン（PostgreSQL）。上のmicrometer-tracing-bridge-otelは
+         既定ではHTTPサーバー + RestClientのみを対象とする。これはDataSource自体に
+         Micrometer Observationの計装を追加するもので、既存のDataSource Beanへ
+         自動構成され、同じtracing bridge経由でOTelへブリッジされる（OpenTelemetry
+         専用の別アーティファクトは不要）。1.x系はSpring Boot 3.x向け（2.x系は
+         Spring Boot 4.x向け）。jdbc-observations/datasource-micrometer参照。 -->
     <dependency>
       <groupId>net.ttddyy.observation</groupId>
       <artifactId>datasource-micrometer-spring-boot</artifactId>

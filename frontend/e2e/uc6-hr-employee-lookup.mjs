@@ -1,6 +1,6 @@
-// UC6 (docs/use-cases.md): 正常系. tanaka-hr (hr-viewer) looks up another employee's
-// info directly from Employee Service.
-// Run: node e2e/uc6-hr-employee-lookup.mjs
+// UC6（docs/use-cases.md）：正常系。tanaka-hr（hr-viewer）がEmployee Serviceから
+// 直接、他の社員の情報を照会する。
+// 実行: node e2e/uc6-hr-employee-lookup.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

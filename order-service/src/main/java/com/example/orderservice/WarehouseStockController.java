@@ -10,20 +10,20 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * UC8/UC9 (docs/use-cases.md): the logistics all-branch inquiry screen. Deliberately
- * carries no @PreAuthorize: branch-level access (warehouse-viewer/-all, ABAC branch
- * match) is not order-service's business (services.md declares its own feature set as
- * just 受注登録/受注照会) -- it is Warehouse Service's alone (services.md: "組織的に独立
- * した拠点システム"). order-service is forced to be this request's first hop only
- * because the delegation topology gives frontend no other way to reach it (permission-
- * matrix.md 表1), not because it has any authority to exercise here. Gating on
- * order-writer/order-reader would be equally wrong (sato-logistics, UC8's persona,
- * holds neither), and gating on warehouse-viewer(-all) -- what the previous version of
- * this file did -- duplicates Warehouse Service's own RBAC and silently goes stale if
- * that role vocabulary ever changes (docs/backlog.md, now resolved; see
- * architecture.md §20). So: authenticate (already enforced by SecurityConfig's
- * `.anyRequest().authenticated()`) and relay; let the chain's authority (Warehouse
- * Service) decide and propagate its denial back untouched.
+ * UC8/UC9（docs/use-cases.md）：物流部門向けの全支店在庫照会画面。意図的に
+ * @PreAuthorizeを持たない。支店レベルのアクセス制御（warehouse-viewer/-all、ABACの
+ * 支店一致判定）はorder-serviceの守備範囲ではなく（services.mdが定義する自身の
+ * 提供機能は受注登録/受注照会のみ）、Warehouse Service単独の権威である
+ * （services.md：「組織的に独立した拠点システム」）。order-serviceがこのリクエストの
+ * 最初のホップになるのは、委任トポロジー上frontendが他に到達手段を持たないためで
+ * あり（permission-matrix.md 表1）、order-service自身がここで行使すべき権限がある
+ * からではない。order-writer/order-readerで絞るのも同様に誤り（UC8のペルソナである
+ * sato-logisticsはどちらも持たない）、warehouse-viewer(-all)で絞るのも
+ * （このファイルの旧版がまさにそうしていた）Warehouse Service自身のRBACの二重実装
+ * になり、そちら側のロール体系が変われば静かに陳腐化する（docs/backlog.mdに起票、
+ * architecture.md §20で解消済み）。したがって：認証のみ行い（SecurityConfigの
+ * `.anyRequest().authenticated()`で既に強制済み）、中継に徹する。判断はチェーン上の
+ * 権威（Warehouse Service）に委ね、その拒否結果をそのまま伝播させる。
  */
 @RestController
 public class WarehouseStockController {

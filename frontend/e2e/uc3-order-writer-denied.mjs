@@ -1,8 +1,8 @@
-// UC3 (docs/use-cases.md): 異常系・権限不足. A user without order-writer (only
-// order-reader/inventory-reader) attempts to register an order. Order Service's
-// @PreAuthorize denies the request at the entry point -- unlike UC4's branch-mismatch
-// denial, this surfaces as an HTTP error, and no order row is ever created.
-// Run: node e2e/uc3-order-writer-denied.mjs
+// UC3（docs/use-cases.md）：異常系・権限不足。order-writerを持たないユーザー
+// （order-reader/inventory-readerのみ）が受注登録を試みる。Order Serviceの
+// @PreAuthorizeが入口で拒否する——UC4の支店不一致による拒否と異なり、これは
+// HTTPエラーとして表面化し、受注レコードは一切作成されない。
+// 実行: node e2e/uc3-order-writer-denied.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

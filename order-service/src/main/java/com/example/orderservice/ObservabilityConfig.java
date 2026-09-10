@@ -9,11 +9,11 @@ import org.springframework.http.server.observation.ServerRequestObservationConte
 public class ObservabilityConfig {
 
     /**
-     * Excludes GET /health (the compose healthcheck target, hit every 5s) from HTTP
-     * server observations -- and therefore from the OTel traces Micrometer Tracing
-     * bridges them into -- so the service graph isn't flooded with a caller-less node.
-     * Beans of this type are auto-registered on the ObservationRegistry (Spring Boot's
-     * Observability support); returning false means "don't observe this one".
+     * GET /health（composeのヘルスチェック対象で5秒ごとに叩かれる）をHTTPサーバーの
+     * observationから除外する。Micrometer TracingがこれをOTelトレースへブリッジする
+     * ため、除外しないとservice graphが呼び出し元不明のノードで埋め尽くされる。
+     * このBean型はObservationRegistry（Spring Bootのobservability機能）へ自動登録
+     * される。falseを返すことが「これは計測しない」を意味する。
      */
     @Bean
     public ObservationPredicate noHealthCheckObservations() {

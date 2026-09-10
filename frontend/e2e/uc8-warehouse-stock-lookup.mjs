@@ -1,10 +1,11 @@
-// UC8 (docs/use-cases.md): 正常系. sato-logistics (branch=osaka, warehouse-viewer-all)
-// looks up product-A, which is stocked at both tokyo and osaka (warehouse-service/db/seed.sh).
-// The request carries no branch -- it asks "what can I see", and warehouse-viewer-all
-// bypasses the ABAC branch match, so both branches (not just their own, osaka) come back
-// in one response, proving the bypass (a plain warehouse-viewer would only ever see their
-// own branch, per UC1/UC4).
-// Run: node e2e/uc8-warehouse-stock-lookup.mjs
+// UC8（docs/use-cases.md）：正常系。sato-logistics（branch=osaka、
+// warehouse-viewer-all）がproduct-Aを照会する。この商品はtokyo・osaka両支店に
+// 在庫がある（warehouse-service/db/seed.sh）。リクエストに支店は含まれない——
+// 「自分に何が見えるか」を問う形であり、warehouse-viewer-allはABACの支店一致
+// 判定をバイパスするため、自分の所属支店（osaka）だけでなく両支店が1つの
+// レスポンスに返ってくる。このバイパスが効いていることの証明になる
+// （一般のwarehouse-viewerは、UC1/UC4の通り常に自分の所属支店しか見えない）。
+// 実行: node e2e/uc8-warehouse-stock-lookup.mjs
 import { loginAs, createChecker } from "./helpers.mjs";
 
 const { check, report } = createChecker();

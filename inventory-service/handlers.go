@@ -14,8 +14,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-// tracedHTTPClient injects the W3C traceparent header derived from the request
-// context's active span into outgoing calls, connecting them into the trace tree.
+// tracedHTTPClientはリクエストcontextの有効なスパンから導かれるW3C traceparent
+// ヘッダーを発信呼び出しに注入し、トレースツリーへ接続する。
 var tracedHTTPClient = &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 type Product struct {
@@ -31,9 +31,10 @@ type InventoryHandlers struct {
 	warehouseBaseURL string
 }
 
-// getProduct answers "is there stock somewhere" from Inventory Service's own aggregate
-// view. It never calls Warehouse Service: the aggregate is synced from there
-// asynchronously in a real deployment (here, seeded via db/init.sql instead).
+// getProductはInventory Service自身が持つ集計値ビューから「どこかに在庫があるか」に
+// 答える。Warehouse Serviceを呼び出すことは一切ない：実運用ではこの集計値は
+// Warehouse Serviceから非同期に同期される（本サンプルではdb/init.sqlで種データを
+// 投入する形で代替している）。
 func (h *InventoryHandlers) getProduct(w http.ResponseWriter, r *http.Request) {
 	product, err := h.loadProduct(r.PathValue("id"))
 	if err == sql.ErrNoRows {
@@ -52,10 +53,10 @@ type reserveRequest struct {
 	Quantity int `json:"quantity"`
 }
 
-// reserve requires an actual location-specific reservation, which only Warehouse
-// Service can authoritatively perform (it owns the real per-branch stock and the
-// branch-access policy). This exchanges the caller's token for warehouse-service's
-// audience and calls its /reserve endpoint for the product's designated branch.
+// reserveは拠点固有の実際の引当てを必要とし、これを権威を持って行えるのは
+// Warehouse Serviceだけである（実際の支店別在庫と支店アクセスポリシーを保有する
+// のはWarehouse Service）。呼び出し元のトークンをwarehouse-service向けaudienceへ
+// 交換し、商品の担当支店に対する/reserveエンドポイントを呼び出す。
 func (h *InventoryHandlers) reserve(w http.ResponseWriter, r *http.Request) {
 	productID := r.PathValue("id")
 
@@ -109,9 +110,9 @@ func (h *InventoryHandlers) reserve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, product)
 }
 
-// reserveAtWarehouse returns (true, nil) on success, (false, nil) if Warehouse Service
-// reports insufficient stock or denies branch access (both surfaced to the caller as
-// "this reservation didn't happen", without leaking which of the two it was).
+// reserveAtWarehouseは成功時(true, nil)を返し、Warehouse Serviceが在庫不足を報告
+// した場合も支店アクセスを拒否した場合も(false, nil)を返す（どちらの場合も呼び
+// 出し元には「この引当ては行われなかった」とだけ伝わり、どちらが理由かは漏らさない）。
 func (h *InventoryHandlers) reserveAtWarehouse(ctx context.Context, token, branch, productID string, quantity int) (bool, error) {
 	body, _ := json.Marshal(reserveRequest{Quantity: quantity})
 	url := fmt.Sprintf("%s/warehouse/%s/stock/%s/reserve", h.warehouseBaseURL, branch, productID)
@@ -138,16 +139,16 @@ func (h *InventoryHandlers) reserveAtWarehouse(ctx context.Context, token, branc
 	}
 }
 
-// getWarehouseStock (UC8/UC9, docs/use-cases.md) is a passthrough to Warehouse
-// Service's own branch-visibility-filtered stock lookup, used by the logistics
-// all-branch inquiry screen. It asks "what can this caller see", not "what's at branch
-// X" -- there is no branch in this request at all, only productID, so there is no
-// caller-chosen branch to be denied for; Warehouse Service returns exactly the set of
-// branches (possibly empty, possibly one, possibly all) the caller may see, and this
-// relays that response verbatim. The one exception is a 403 for holding neither
-// warehouse-viewer nor warehouse-viewer-all at all (not an ABAC/branch question, a
-// "this screen isn't for you" RBAC gate, same shape as UC3/UC7) -- relayed as-is too,
-// with no interpretation needed: architecture.md §20.
+// getWarehouseStock（UC8/UC9, docs/use-cases.md）は、物流部門向け全支店照会画面が
+// 使う、Warehouse Service自身の支店可視性フィルタ済み在庫照会への中継である。
+// 「支店Xには何があるか」ではなく「この呼び出し元に何が見えるか」を問う——この
+// リクエストにはそもそも支店が含まれず、productIDのみなので、呼び出し元が指定した
+// 支店を拒否するという状況自体が発生しない。Warehouse Serviceは呼び出し元が見て
+// よい支店の集合（空、1件、全件のいずれもありうる）をそのまま返し、ここではその
+// レスポンスをそのまま中継する。唯一の例外はwarehouse-viewer・warehouse-viewer-all
+// のどちらも持たない場合の403（ABAC/支店の問題ではなく、UC3/UC7と同種の「この画面
+// の対象外です」というRBACゲート）で、これも解釈を加えずそのまま中継する：
+// architecture.md §20。
 func (h *InventoryHandlers) getWarehouseStock(w http.ResponseWriter, r *http.Request) {
 	productID := r.PathValue("productId")
 
