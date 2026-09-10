@@ -173,7 +173,9 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 
 ### 採用: 交換後トークンの短寿命化
 
-- サービス間の中継トークンはTTLを短く設定する（即座に消費される用途のため）
+- 内部の委任チェーン（Order→Inventory→Warehouse→Employee）で交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮。即座に消費される用途のため）
+- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効くことを実機検証で確認した（対象audience側の属性ではない。詳細は[insights.md](insights.md)参照）
+- frontendの中継トークン（frontend→order-service等）は対象外：DPoPで送信者拘束済みのため、単体のBearerトークンとしての再提示という脅威モデル自体が成立しない（上記のDPoP節を参照）。employee-serviceはチェーンの末端でありToken Exchangeを要求する側にならないため対象外
 
 ### 不採用: mTLS(RFC 8705) Certificate-Bound Access Tokens
 

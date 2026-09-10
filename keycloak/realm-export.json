@@ -147,7 +147,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "defaultClientScopes": ["roles"],
-      "attributes": { "standard.token.exchange.enabled": "true" },
+      "attributes": { "standard.token.exchange.enabled": "true", "access.token.lifespan": "60" },
       "optionalClientScopes": ["inventory"]
     },
     {
@@ -159,7 +159,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "defaultClientScopes": ["roles"],
-      "attributes": { "standard.token.exchange.enabled": "true" },
+      "attributes": { "standard.token.exchange.enabled": "true", "access.token.lifespan": "60" },
       "optionalClientScopes": ["warehouse"]
     },
     {
@@ -171,7 +171,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "defaultClientScopes": ["roles"],
-      "attributes": { "standard.token.exchange.enabled": "true" },
+      "attributes": { "standard.token.exchange.enabled": "true", "access.token.lifespan": "60" },
       "optionalClientScopes": ["employee"]
     },
     {

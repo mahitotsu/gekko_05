@@ -11,6 +11,14 @@ realm importでは（単純な`POST /admin/realms`でのrealm作成と異なり�
 - `sub`クレーム：組み込みでは自動的に付与されず、`oidc-sub-mapper`を`roles`スコープに追加する必要がある（実機で確認：追加前はaccess_tokenに`sub`が一切含まれずToken Exchange時の記録が取れなかった）
 - 所属支店のような社員情報：`roles`スコープに`oidc-usermodel-property-mapper`を追加しないと`preferred_username`以外のクレームが載らない
 
+### Token ExchangeでのTTLは交換先(audience)ではなく交換元(azp)クライアントの`access.token.lifespan`が効く
+
+`access.token.lifespan`はクライアント属性としてrealmデフォルトの`accessTokenLifespan`を上書きできるが、Token Exchange V2で発行されるトークンにどちらのクライアント（交換を要求した側／要求先のaudience）の属性が適用されるかはドキュメントに明記がなく、実機で確認した。
+
+- 検証方法：`order-service`クライアントにのみ`access.token.lifespan: "45"`を設定し、`inventory-service`（audience側、属性なし）へのToken Exchangeを実行 → 発行トークンの`expires_in`は45（realmデフォルトの300ではない）
+- 結論：**交換を要求したクライアント（`azp`となるクライアント、＝`client_id`/`client_secret`で認証した側）の`access.token.lifespan`がそのまま適用される**。audience側クライアントの同属性は無関係
+- 実装：委任チェーンでToken Exchangeを要求する3クライアント（order-service/inventory-service/warehouse-service）それぞれに設定する必要がある。1箇所（例えば末端のemployee-service）に設定しても、そのクライアントが要求元にならないホップには効かない（[architecture.md](architecture.md) §11参照）
+
 ### `KC_HOSTNAME`の固定が必要
 
 内部（docker network経由、例: `http://keycloak:8080`）と外部（ホストマシン経由、例: `http://localhost:8080`）でKeycloakへの到達ホスト名が異なると、Keycloakは自分自身のissuerをリクエストごとに動的算出するため、外部で発行されたトークンをサービスが内部経路でToken Exchangeしようとすると`invalid_request: Invalid token`で拒否される。`KC_HOSTNAME`を固定することで解決した（実機で確認）。
