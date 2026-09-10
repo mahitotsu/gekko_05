@@ -1,6 +1,8 @@
 {
   "realm": "kikan-system",
   "enabled": true,
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
   "roles": {
     "realm": [
       { "name": "order-writer" },

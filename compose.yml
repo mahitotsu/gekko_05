@@ -65,6 +65,12 @@ services:
       # interface defeated this suppression was fixed in Quarkus 3.15.4, well below
       # the 3.27.1 this Keycloak version bundles -- verified empirically).
       KC_HEALTH_ENABLED: "true"
+      # jboss-logging event listener's default success-level is DEBUG, invisible at
+      # the default INFO root log level -- confirmed empirically: with this unset,
+      # LOGIN/TOKEN_EXCHANGE success events never appeared in `docker logs`, while
+      # *_ERROR events (logged at WARN) did. Error level is already WARN by default,
+      # so only success-level needs raising here.
+      KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: "info"
     depends_on:
       otel-lgtm:
         condition: service_healthy
