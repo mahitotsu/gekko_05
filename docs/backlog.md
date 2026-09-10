@@ -2,6 +2,14 @@
 
 未着手の改善項目。優先度は明記していないもの以外は並列。着手時はこのファイルから該当項目を削除し、必要ならarchitecture.md/insights.mdへ結果を記録する。
 
+## アプリ層の認可決定ログ設計
+
+現状の監査設計（§9/§10）はKeycloak層（サービス間のToken Exchange成功/失敗）のみを対象としており、アプリ層の認可決定が記録されていない。具体的にはUC4のような支店不一致による引当拒否（Warehouse Serviceがstatus=REJECTEDを返す判断）が、どのサービスのどのログにも残らない。
+
+- **設計が必要な内容**：`sub`・`jti`・`trace_id`・判定結果（PERMIT/DENY）・判定根拠（例: `branch_mismatch`）を構造化ログとして記録する形式と記録箇所（Warehouse Service、Inventory Serviceそれぞれ）
+- **参照**：[use-cases.md](use-cases.md) UC4、[architecture.md](architecture.md) §9（Keycloak層のログ設計）、[insights.md](insights.md)「監査ログ・トークン監査」節
+- **前提**：アプリ層ABAC（permission-matrix.md 表2〜5）の実装が先行する
+
 ## WebUIの見た目の改善
 
 現状の`frontend/app/app.vue`は受注登録フォーム・受注一覧・社員情報照会のみの最小限の実装。スタイリング・レイアウトの改善。

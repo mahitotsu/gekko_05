@@ -138,7 +138,7 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 |---|---|---|
 | `sub`（誰の権利で処理しているか） | 維持される。Keycloak発行トークンで暗号学的に保証 | アクセス権の照会・制御はこれのみで実現可能 |
 | 委任トポロジーのリアルタイム制御 | optional client scopeの割当で実現。不正なホップ飛ばしはKeycloak自身が拒否する | リスクなし |
-| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログには残る | ログ突合で代替（§10、実際の突合手法は[backlog.md](backlog.md)） |
+| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§10・[insights.md](insights.md)参照） | ログ突合で代替（§10） |
 
 **結論**：実験的機能には依存せず、Standard Token Exchange V2 のみを使用する。
 
@@ -155,7 +155,7 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 **根拠**：
 - 自己申告ヘッダ（例: `X-Delegation-Chain`）は署名も検証もされず認可判断の根拠にできない
 - 認可トポロジーのリアルタイム制御は既にoptional client scopeの割当が担っている（クライアント認証と紐づいてKeycloakが強制する）
-- 「誰が誰の代わりに交換を要求したか」という認可判断の事実はKeycloakの管理イベントログに既に記録されている。OTelトレースは「経路の可視化」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う。役割が異なるため両方を残す
+- 「誰が誰の代わりに交換を要求したか」という認可判断の事実はKeycloakの管理イベントログに記録される。ただしデフォルト（`eventsEnabled=false`）では一切記録されないため、`eventsEnabled=true`の明示設定が必要（[insights.md](insights.md)「監査ログ・トークン監査」節参照）。OTelトレースは「経路の可視化」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う。役割が異なるため両方を残す
 - 独自ログ形式は既存標準（OTel）の再発明であり、可視化ツール（Jaeger等）との連携も失われる
 
 ## 11. トークン漏洩・再提示リスクへの対策
@@ -247,17 +247,25 @@ Token Exchangeの呼び出し元がDPoP-boundな場合の交換後トークン�
 
 ## 17. BFF化とedge-proxyの導入
 
-v1のSPA構成は、アクセストークンをブラウザ側（`oidc-client-ts`経由でIndexedDB等）に保持していた。OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）はこれをXSSによる漏洩リスクとして非推奨としており、この点を修正するため以下の構成へ移行した。
+OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）に従い、アクセストークンをブラウザに渡さないBFF構成を採用する。
 
-- **Frontendのサーバー化**：`frontend/`をNuxt（Nitro）の単一コンテナに置き換え、ログイン処理・トークン保有をサーバーサイド（`server/api/*`）に完全移動（§14）
-- **edge-proxyの新設**：`edge-proxy/`（nginx）をfrontendの前段に配置し、ホストに公開する唯一の入口とした。`/realms/*`・`/resources/*`はKeycloakへ、それ以外はfrontendへ振り分ける。CDN/APIゲートウェイ的な構成を模しつつ、ブラウザから見えるオリジンを単一化する目的
-  - frontend自身がリバースプロキシを兼ねる案は採らなかった。実運用でこの位置に来るのはCDN/ゲートウェイであり、アプリケーションプロセスとは別のコンポーネントであるほうが実態に近いため
-- **Keycloakのホスト直接公開を廃止**：`KC_HOSTNAME`をedge-proxyの公開アドレス（`http://localhost:3000`）に固定し、Keycloakコンテナ自体のホストポート公開を削除。ブラウザ・バックエンドサービスのどちらも最終的に単一の`iss`値に到達する構成を維持
-- **frontendクライアントの機密クライアント化**：`publicClient: true`から`false`＋`secret`に変更し、`standard.token.exchange.enabled: true`を追加（BFFが自分自身のクライアントとしてToken Exchangeを行うため）。`directAccessGrantsEnabled`はテストハーネス（`permission-matrix.sh`のパスワードグラントによるユーザートークン取得、DPoP検証込み）のためにあえて`true`のまま残した。BFF自体はAuthorization Code + PKCEしか使わない
-- **不要になったホストポート公開の削除**：ブラウザ・テストスクリプトのいずれも各マイクロサービスやDBにホスト経由で直接アクセスする必要がなくなったため、`ports:`定義を全て削除（edge-proxyの3000のみ公開）
-- **CORS設定の削除**：Order Service・Employee Serviceはブラウザから直接呼ばれなくなったため、両サービスのCORS設定を削除
+- **Frontendのサーバー化**：`frontend/`をNuxt（Nitro）の単一コンテナとし、ログイン処理・トークン保有をサーバーサイド（`server/api/*`）に完全に閉じる（§14）
+- **edge-proxyの新設**：`edge-proxy/`（nginx）をfrontendの前段に配置し、ホストに公開する唯一の入口とする。`/realms/*`・`/resources/*`はKeycloakへ、それ以外はfrontendへ振り分ける。ブラウザから見えるオリジンを単一化し、CDN/APIゲートウェイ的な構成を模す。実運用でこの位置に来るのはアプリケーションプロセスとは別のコンポーネント（CDN/ゲートウェイ）であるため、frontendがリバースプロキシを兼ねる構成は採らない
+- **Keycloakのホスト直接公開を廃止**：`KC_HOSTNAME`をedge-proxyの公開アドレス（`http://localhost:3000`）に固定し、Keycloakコンテナ自体のホストポート公開を削除。ブラウザ・バックエンドサービスのどちらも最終的に単一の`iss`値に到達する
+- **frontendクライアントを機密クライアント化**：`publicClient: false`＋`secret`、`standard.token.exchange.enabled: true`（BFFが自分自身のクライアントとしてToken Exchangeを行うため）。`directAccessGrantsEnabled`はテストハーネス（`permission-matrix.sh`のパスワードグラントによるユーザートークン取得）のためにあえて`true`のまま残す。BFF自体はAuthorization Code + PKCEのみ使用する
+- **各サービスのホストポート公開を削除**：各マイクロサービス・DBのホスト経由直接アクセスが不要になったため、`ports:`定義を全て削除（edge-proxyの3000のみ公開）
+- **CORS設定の削除**：Order Service・Employee Serviceはブラウザから直接呼ばれないため、両サービスのCORS設定を削除
 
 ## 18. 既知の制約として受容した事項
+
+### 内部サービス間チェーンへのDPoP非適用
+
+Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない。根拠は以下の通り。
+
+- DPoP が防ぐのは「トークンだけが盗まれた場合の再利用」である。内部チェーンのトークンはすべて Docker private network 内にのみ存在し、ブラウザや外部ネットワークには出ない。frontendクライアントのトークンと脅威モデルが異なる
+- 仮に内部トークンが盗まれても、`aud` クレームによって提示できるサービスが一つに限定される。他サービスへ横展開するには Token Exchange が必要で、それにはそのサービスのクライアント認証情報も要る。クライアント認証情報まで盗まれた時点でサービス自体が侵害されており、トークン再利用より大きな問題になっている
+- 残るリスク（TTL内の `aud` 一致サービスへの直接再提示）は短TTLで緩和する
+- 内部サービス間の送信者拘束が本番要件になる場合は mTLS（RFC 8705）が適切な対策であり、§11に選択肢として付記している
 
 ### issuerの「localhost」感・ポート番号残存
 
