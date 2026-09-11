@@ -64,7 +64,7 @@
 
 - スコープの段階的絞り込み（`order` → `inventory` → `warehouse` → `employee`）
 - 各ホップでの認可判定の違い（ユーザー権限 vs 委任元サービスの正当性）
-- 3ホップ全てをToken Exchange（Delegation）で統一し、`sub`（元ユーザー）を最後まで維持する
+- 3ホップ全てをToken Exchangeで統一し、`sub`（元ユーザー）を最後まで維持する
 - 業務データに対する認可判断の権威は、そのデータを保有するサービス1つに集約する。他サービスは中継に徹し、判断を持たない（例: 支店別在庫のアクセス制御はWarehouse Serviceのみが行う。ディシジョンテーブルは[permission-matrix.md](permission-matrix.md)表5、設計判断の経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照）
 
 ## 3. Token Exchange の実装方式
@@ -88,11 +88,12 @@
 
 Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 
-- **ダウンスコープのみ**：`audience`パラメータで対象クライアント／スコープを絞り込んだ新トークンを発行する。`sub`（元ユーザー）はそのまま維持される（偽装ではない）。本サンプルはこの**Delegation（委任）**方式のみを用いる。`sub`自体を差し替えるImpersonation方式は使用しない
+- **ダウンスコープのみ**：`audience`パラメータで対象クライアント／スコープを絞り込んだ新トークンを発行する。`sub`（元ユーザー）はそのまま維持される（偽装ではない）
 - Fine-Grained Admin Permissions は**不要**（V1からの簡略化）
 - `subject_token`の`aud`に要求元クライアントが含まれている必要がある（自分自身のトークンを交換する場合を除く）。Keycloakが交換**時点**でこれを検証するため、権限のないクライアントが他クライアント宛のトークンを流用して交換することはできない
 - 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§9）
-- **RFC 8693 の `act` クレーム（委任チェーンの表現）は標準では生成されない**。実験的機能（`token-exchange-delegation`等）には依存せず、Standard V2 のみを使用する（→ [ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）
+- **RFC 8693 の `act` クレーム（アクター情報）は標準では生成されない**。実験的機能（`token-exchange-delegation`等）には依存せず、Standard V2 のみを使用する（→ [ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）
+- RFC 8693でImpersonationとDelegationを分けるのは`actor_token`（と結果としての`act`クレーム）の有無のみで、`sub`が維持されるかどうかは両方式に共通する性質であり判定基準にならない。本サンプルは`actor_token`を渡さない（上記の通りStandard V2が非対応）ため、厳密には**Impersonation**に分類される（誤解しやすい点の詳細は[insights.md](insights.md)参照）
 
 ### リスク評価
 

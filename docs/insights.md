@@ -51,6 +51,16 @@
 
 **補足（`id_token`保持の必要性）**：`id_token_hint`にはログイン時のIDトークンが必要だが、BFF実装ではダウンストリームAPIアクセスに`access_token`しか使わないため、`id_token`を「不要」として受け取ったまま捨てていた。ログアウト要件を意識しないと`id_token`をセッションに保存するモチベーションが生まれず、見落としやすい。
 
+### RFC 8693のImpersonation/Delegationを区別するのは`sub`維持ではなく`actor_token`の有無
+
+**誤解**：Token Exchangeで発行されるトークンの`sub`が元ユーザーのまま維持される（偽装ではない）ことを根拠に、「本サンプルはDelegation方式を採用している」とドキュメントに記載してしまっていた。
+
+**原因**：RFC 8693のImpersonationとDelegationは、どちらも発行トークンの`sub`は`subject_token`の`sub`のまま維持される（この点は両方式に共通する）。両方式を分けるのは**`actor_token`（と結果として発行トークンに載る`act`クレーム）を渡すかどうか、それだけ**。`actor_token`を渡せば`act`クレームが付与されるDelegation、渡さなければImpersonation——`sub`が維持されるかどうかは判定基準にならない（Impersonationという英語の語感から「`sub`が差し替わる方式」だと直感的に思い込みやすいが、RFC上はそうではない）。
+
+**訂正**：Keycloak Standard Token Exchange V2は`actor_token`をサポートせず`act`クレームを生成しない（[ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）。つまり本サンプルは`actor_token`を渡していないため、RFC 8693の分類上は厳密には**Impersonation**に該当する（詳細は[architecture.md](architecture.md) §6参照）。「`sub`維持＝Delegation」という判定は誤り。
+
+**一般化**：`sub`維持は両方式に共通する性質であり、これを判定軸にすると必ず誤判定する。実際に手を動かしてRFC 8693の`actor_token`/`act`クレームの仕組みを確認するまで気づきにくい、再発しやすい誤解。
+
 <a id="edge-proxy-nginx--コンテナネットワーキング"></a>
 ## Edge Proxy (nginx) / コンテナネットワーキング
 
