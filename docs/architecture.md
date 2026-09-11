@@ -153,7 +153,7 @@ DPoP（§8）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 - Authorization Code + PKCEは自前実装（`server/utils/pkce.ts`）
 - セッションは`server/utils/session.ts`のインメモリ`Map`（コンテナ1台構成のため共有ストアは不要。コンテナ再起動で全ユーザーがログアウトされる制約は許容）
 - 画面（`app/app.vue`）は受注登録フォーム・受注一覧・社員情報照会のみで、全て同一オリジンの`/api/*`へfetchする
-- `frontend/e2e/login-and-order.mjs`（`npm run e2e`）としてPlaywright E2Eテストを常設。ログイン→受注登録→一覧反映→自分の社員情報照会までを実ブラウザで検証する。`keycloak/tests/permission-matrix.sh`がKeycloak層の検証を担うのと対になる、UIからの検証
+- `frontend/e2e/uc*.mjs`（`npm run e2e`で一括実行）としてPlaywright E2Eテストを常設。[use-cases.md](use-cases.md)の各ユースケースに対応する形で実ブラウザから検証する。`keycloak/tests/permission-matrix.sh`がKeycloak層の検証を担うのと対になる、UIからの検証
 
 ## 12. DPoPの設計
 

@@ -1,6 +1,6 @@
 # gekko_05
 
-OAuth 2.0 Token Exchange (RFC 8693) のサンプル実装。目的・背景・要求水準は[docs/requirements.md](docs/requirements.md)を参照。
+OAuth 2.0 Token Exchange (RFC 8693) のサンプル実装。**ローカル環境で完結する参照実装であり、本番投入を想定した設定ではない**（テストユーザーのパスワードが全員固定など、後述）。目的・背景・要求水準は[docs/requirements.md](docs/requirements.md)を参照。
 
 ## クイックスタート
 
@@ -17,7 +17,7 @@ docker compose up --build
 | `docs/` | 設計・要件・運用ドキュメント一式（下記「ドキュメントの読み方」参照） |
 | `keycloak/` | 認可サーバー設定（`realm-export.json`）・検証スクリプト（`tests/permission-matrix.sh`） |
 | `edge-proxy/` | nginx。ホストに公開する唯一の入口 |
-| `frontend/` | BFF (Nuxt/Nitro)。ユーザーの唯一の入口。E2Eテスト（`e2e/login-and-order.mjs`）を含む |
+| `frontend/` | BFF (Nuxt/Nitro)。ユーザーの唯一の入口。E2Eテスト（`e2e/uc*.mjs`、`npm run e2e`で一括実行）を含む |
 | `order-service/` | 受注登録（Java / Spring Boot） |
 | `inventory-service/` | 在庫確認（Go） |
 | `warehouse-service/` | 支店別在庫（Rust） |
@@ -40,7 +40,7 @@ docker compose up --build
 ## テスト
 
 - `keycloak/tests/permission-matrix.sh` — Keycloak層（Token Exchangeの許可/拒否）の検証
-- `frontend/e2e/login-and-order.mjs`（`npm run e2e`） — 実ブラウザでのログイン〜受注登録のE2E検証
+- `frontend/e2e/uc*.mjs`（`npm run e2e`で一括実行） — 各ユースケース（[docs/use-cases.md](docs/use-cases.md)）に対応する実ブラウザでのE2E検証
 
 ## 監査デモ
 
