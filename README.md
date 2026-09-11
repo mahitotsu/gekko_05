@@ -1,10 +1,6 @@
 # gekko_05
 
-OAuth 2.0 Token Exchange (RFC 8693) の仕組みを、マイクロサービス化された基幹システムを模したローカル実行可能なサンプルで示すプロジェクト。
-
-想定ユースケースは基幹システムにおける**アクセス権の照会・制御**：あるサービスがユーザーの代わりに下流サービスを呼び出す際、元のユーザーの権限とスコープを適切に絞り込みながら伝播させる（Delegation）。受発注システムをモチーフに、Frontend → Order Service → Inventory Service → Warehouse Service → Employee Service という4サービス・3ホップの委任チェーンを、Keycloak（Standard Token Exchange V2）を認可サーバーとして実際に構築している。
-
-各ホップの実装言語は意図的に揃えず、Java・Go・Rust・Python・TypeScriptを使い分けている（Token Exchangeはバックチャネルの HTTP+JWT 操作であり、言語間の技術的な優劣がないことを示すため）。
+OAuth 2.0 Token Exchange (RFC 8693) のサンプル実装。目的・背景・要求水準は[docs/requirements.md](docs/requirements.md)を参照。
 
 ## クイックスタート
 
@@ -14,9 +10,26 @@ docker compose up --build
 
 起動後、`http://localhost:3000` にブラウザでアクセス（唯一の公開ポート。テストユーザーは`keycloak/realm-export.json`参照、パスワードは全員`password`）。OTelトレースは`http://localhost:3000/grafana/`から参照できる。
 
-## ドキュメント
+## フォルダ構成
 
-- [docs/architecture.md](docs/architecture.md) — 全体アーキテクチャ・設計判断とその根拠
+| パス | 内容 |
+|---|---|
+| `docs/` | 設計・要件・運用ドキュメント一式（下記「ドキュメントの読み方」参照） |
+| `keycloak/` | 認可サーバー設定（`realm-export.json`）・検証スクリプト（`tests/permission-matrix.sh`） |
+| `edge-proxy/` | nginx。ホストに公開する唯一の入口 |
+| `frontend/` | BFF (Nuxt/Nitro)。ユーザーの唯一の入口。E2Eテスト（`e2e/login-and-order.mjs`）を含む |
+| `order-service/` | 受注登録（Java / Spring Boot） |
+| `inventory-service/` | 在庫確認（Go） |
+| `warehouse-service/` | 支店別在庫（Rust） |
+| `employee-service/` | 社員属性（Python） |
+| `audit/` | トークン発行・利用記録とアクセスログの突合監査ツール |
+| `alloy/` | ログ収集エージェント設定（Grafana Alloy） |
+
+## ドキュメントの読み方
+
+- [docs/requirements.md](docs/requirements.md) — 目的・背景・要求水準（何を・なぜ実現するか）
+- [docs/architecture.md](docs/architecture.md) — 現在有効なアーキテクチャの断面（どう構築したか）
+- [docs/adr/](docs/adr/) — 個々の設計判断の根拠・選択経緯
 - [docs/services.md](docs/services.md) — 各サービスの存在意義・提供機能・保有データ
 - [docs/permission-matrix.md](docs/permission-matrix.md) — 認可のディシジョンテーブル
 - [docs/use-cases.md](docs/use-cases.md) — 具体的な業務シナリオと委任チェーンの流れ

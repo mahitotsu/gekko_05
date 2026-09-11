@@ -9,7 +9,7 @@ UC8/UC9 実装時、Order Service の `WarehouseStockController` と Inventory S
 
 エンドポイントを「支店 X の在庫は？（→ 権限がなければ 403）」という形のままにした場合、2つの代替案を検討した:
 1. **Inventory Service が Warehouse Service の 403 を正常応答（在庫 0 件等）にすり替える** — 本当は在庫があるのに 0 件と返すことになり虚偽になるため不採用。
-2. **Inventory Service にアクセス権のある倉庫から在庫を選ぶルーティング知能を持たせる** — アクセス権制御という本サンプルの核（§1）を迂回し、かつ実際に複数支店を選べるテストユーザーが存在しないため不採用。
+2. **Inventory Service にアクセス権のある倉庫から在庫を選ぶルーティング知能を持たせる** — アクセス権制御という本サンプルの核（[requirements.md](../requirements.md)参照）を迂回し、かつ実際に複数支店を選べるテストユーザーが存在しないため不採用。
 
 ## Decision
 
