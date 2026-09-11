@@ -1,6 +1,6 @@
 # アーキテクチャ設計
 
-本ドキュメントは決定事項（結論と根拠）を記録する生きた文書。検討過程や却下案の経緯は記載しない。決定が変わった場合は該当箇所を直接書き換える。個々の実装で見つかった罠・気づきは[insights.md](insights.md)、未着手の改善項目は[backlog.md](backlog.md)を参照。
+本ドキュメントは現在有効なアーキテクチャの断面のみを記録する。個々の設計判断の根拠・選択経緯は [docs/adr/](adr/) を参照。決定が変わった場合は該当箇所を直接書き換え、対応する ADR を Superseded に更新する。個々の実装で見つかった罠・気づきは[insights.md](insights.md)、未着手の改善項目は[backlog.md](backlog.md)を参照。
 
 ## 1. 目的
 
@@ -22,10 +22,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 
 ## 3. 採用する認可サーバー (AS)
 
-**Keycloak**（26.2+, Standard Token Exchange V2）を使用する。
-
-- RFC 8693 Token Exchange をネイティブサポートしている数少ない OSS IdP
-- Ory Hydra は token-exchange grant type 未実装のため不採用
+**Keycloak**（26.2+, Standard Token Exchange V2）を使用する。→ [ADR 0001](adr/0001-authorization-server-keycloak.md)
 
 ## 4. サービス構成（多段委任構成）
 
@@ -64,7 +61,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 [Employee Service: Python]  ── 属性局。ユーザーの所属・権限情報を提供する。委任チェーンの終端
 ```
 
-「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する。Client Policiesは使わない（§12で実機検証済み）。
+「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)、§12で実機検証済み）。
 
 各サービスの存在意義・提供機能・保有データは[services.md](services.md)、具体的な業務シナリオは[use-cases.md](use-cases.md)、認可のディシジョンテーブルは[permission-matrix.md](permission-matrix.md)を参照。
 
@@ -89,11 +86,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 
 ## 5. Token Exchange の実装方式
 
-**各サービスのアプリケーション本体で実装する**（Envoy等のプロキシ/サイドカーには委譲しない）。
-
-- 本リポジトリの目的は RFC 8693 の意味論を学べるサンプルを作ることであり、プロキシに隠すとロジックがコードから見えなくなる
-- Envoy の `envoy.filters.http.oauth2` は Authorization Code フロー向けで RFC 8693 Token Exchange グラントには非対応。プロキシ側でやるにはカスタム ext_authz サービスの自作が必要になり、複雑さが移動するだけで可視性は下がる
-- 各サービスは Keycloak に対して自身のクライアント認証情報（confidential client）で `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` を直接呼び出す
+**各サービスのアプリケーション本体で実装する**（Envoy等のプロキシ/サイドカーには委譲しない）。各サービスは Keycloak に対して自身のクライアント認証情報（confidential client）で `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` を直接呼び出す。→ [ADR 0002](adr/0002-token-exchange-in-application-layer.md)
 
 ## 6. 業務ロジックのリアリティ水準
 
@@ -112,15 +105,9 @@ Inventory ServiceとWarehouse Serviceの機能差の要点：Inventory Service�
 | Warehouse Service (Rust) | Redis | 在庫数の増減はホットパス。atomic INCR/DECRで引当処理を表現 |
 | Employee Service (Python) | MongoDB | 社員属性(所属・権限配列)はスキーマ柔軟なドキュメントが自然 |
 
-SQLiteは不採用（サービスごとに最適なDBを選ぶポリグロット永続化のリアリティを優先）。
-
 ## 8. ローカル実行環境のオーケストレーション
 
-**Docker Compose** を採用する。
-
-- Envoy等のプロキシを使わない方針（§5）と合わせ、オーケストレーション自体の複雑さも最小化する
-- 目的はToken Exchangeの意味論を示すことであり、K8sのデプロイパターン学習は本リポジトリのスコープ外
-- `docker compose up` 一発で Keycloak + 5サービス + 4種DB + edge-proxy + grafana/otel-lgtm(トレース可視化, §10) が起動できる構成とする
+**Docker Compose** を採用する。`docker compose up` 一発で Keycloak + 5サービス + 4種DB + edge-proxy + grafana/otel-lgtm（トレース可視化、§10）が起動できる構成とする。→ [ADR 0003](adr/0003-local-orchestration-docker-compose.md)
 
 ## 9. Keycloak Standard Token Exchange V2 の制約と対応
 
@@ -129,8 +116,8 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - **ダウンスコープのみ**：`audience`パラメータで対象クライアント／スコープを絞り込んだ新トークンを発行する。`sub`（元ユーザー）はそのまま維持される（偽装ではない）
 - Fine-Grained Admin Permissions は**不要**（V1からの簡略化）
 - `subject_token`の`aud`に要求元クライアントが含まれている必要がある（自分自身のトークンを交換する場合を除く）。Keycloakが交換**時点**でこれを検証するため、権限のないクライアントが他クライアント宛のトークンを流用して交換することはできない
-- 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§12）。追加のClient Policiesは不要
-- **RFC 8693 の `act` クレーム（委任チェーンの表現）は標準では生成されない**。`token-exchange-delegation`等の実験的機能で`may_act`相当は使えるが、これは「管理者がユーザーとして振る舞う(admin-as-user)」ユースケース向けの設計であり、本サンプルの「サービス間多段委任」とは目的が異なるため使用しない
+- 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§12）
+- **RFC 8693 の `act` クレーム（委任チェーンの表現）は標準では生成されない**。実験的機能（`token-exchange-delegation`等）には依存せず、Standard V2 のみを使用する（→ [ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）
 
 ### リスク評価
 
@@ -140,42 +127,33 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 | 委任トポロジーのリアルタイム制御 | optional client scopeの割当で実現。不正なホップ飛ばしはKeycloak自身が拒否する | リスクなし |
 | 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§10・[insights.md](insights.md)参照） | ログ突合で代替（§10） |
 
-**結論**：実験的機能には依存せず、Standard Token Exchange V2 のみを使用する。
-
 ## 10. 委任チェーンの事後監査
 
-独自のヘッダやログ形式は発明しない。**OpenTelemetry（W3C Trace Context）** に従う。
+**OpenTelemetry（W3C Trace Context）** に従う。→ [ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)
 
 - `traceparent`ヘッダで trace_id を全ホップに伝播する
-- 各サービスは自分のspanとして親span_idのみを記録する。経路全体の再構築は収集基盤側の責務であり、各サービスが経路全体を保持・転送する必要はない
-- 各言語のOTel SDKはHTTPクライアント/サーバーの自動計装を持つため、独自ログ項目を設計するより実装コストが低い
-- 可視化用に **`grafana/otel-lgtm`**（Grafana+Tempo+Loki+Prometheus/Mimirが1コンテナに統合された公式イメージ）を docker-compose に追加する。OTLPエンドポイントが1つで完結し設定不要。今回使うのはトレース（Tempo経由）のみで、メトリクス計装やダッシュボード構築は行わない（ログ・メトリクスの活用は[backlog.md](backlog.md)）
+- 各サービスは自分のspanとして親span_idのみを記録する。経路全体の再構築は収集基盤側の責務
+- 可視化用に **`grafana/otel-lgtm`**（Grafana+Tempo+Loki+Prometheus/Mimirが1コンテナに統合された公式イメージ）を docker-compose に追加する。OTLPエンドポイントが1つで完結し設定不要。今回使うのはトレース（Tempo経由）のみ
 - 実装範囲・各言語の計装方式・見つかった罠は[insights.md](insights.md)を参照。edge-proxy（nginx）は意図的に計装しない（同ドキュメント参照）
 - トークン発行・利用記録とアクセスログを`trace_id`で突合する監査ツールを`audit/`に実装済み。デモ手順と実行結果は[audit-demo.md](audit-demo.md)を参照
-
-**根拠**：
-- 自己申告ヘッダ（例: `X-Delegation-Chain`）は署名も検証もされず認可判断の根拠にできない
-- 認可トポロジーのリアルタイム制御は既にoptional client scopeの割当が担っている（クライアント認証と紐づいてKeycloakが強制する）
-- 「誰が誰の代わりに交換を要求したか」という認可判断の事実はKeycloakの管理イベントログに記録される。ただしデフォルト（`eventsEnabled=false`）では一切記録されないため、`eventsEnabled=true`の明示設定が必要（[insights.md](insights.md)「監査ログ・トークン監査」節参照）。OTelトレースは「経路の可視化」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う。役割が異なるため両方を残す
-- 独自ログ形式は既存標準（OTel）の再発明であり、可視化ツール（Jaeger等）との連携も失われる
+- OTelトレースは「経路の可視化」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う（役割が異なるため両方を維持する）
 
 ## 11. トークン漏洩・再提示リスクへの対策
 
-ベアラートークン一般の漏洩・再提示リスク（漏洩したトークンは提示者を選ばず受理される）への対策として以下を採用する。
+→ [ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)
 
 ### 採用: DPoP (RFC 9449)
 
 - クライアント（各サービス）が自分の秘密鍵で署名した証明(DPoP Proof JWT)を`DPoP`ヘッダで毎回送信
 - アクセストークンの`cnf`クレームに公開鍵のハッシュを埋め込み、リソースサーバーは「提示者が本当に鍵を持っているか」を検証する
-- トークンだけが漏洩しても秘密鍵がなければ再利用できないため、送信者拘束(sender-constrained)を実現できる
-- Keycloakは標準サポートあり（クライアントごとに有効化）。mTLS(RFC 8705)より導入コストが低く、docker-compose環境に適する
-- 適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみに絞り、内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外とした。実装の詳細・伝播ルールの訂正は[insights.md](insights.md)を参照
+- 適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外
+- 実装の詳細・伝播ルールの訂正は[insights.md](insights.md)を参照
 
 ### 採用: 交換後トークンの短寿命化
 
-- 内部の委任チェーン（Order→Inventory→Warehouse→Employee）で交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮。即座に消費される用途のため）
-- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効くことを実機検証で確認した（対象audience側の属性ではない。詳細は[insights.md](insights.md)参照）
-- frontendの中継トークン（frontend→order-service等）は対象外：DPoPで送信者拘束済みのため、単体のBearerトークンとしての再提示という脅威モデル自体が成立しない（上記のDPoP節を参照）。employee-serviceはチェーンの末端でありToken Exchangeを要求する側にならないため対象外
+- 内部の委任チェーン（Order→Inventory→Warehouse→Employee）で交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮）
+- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効く（詳細は[insights.md](insights.md)参照）
+- frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
 
 ### 不採用: mTLS(RFC 8705) Certificate-Bound Access Tokens
 
@@ -183,39 +161,33 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 
 ## 12. 委任トポロジー制御（実機検証済み・Client Policies不要）
 
-Keycloak 26.4.7を実際に起動し、realm・client・client scope・audienceマッパーを構築した上で、実際のToken Exchangeリクエストで検証した。
+→ [ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)
 
 **設計（許可ベース）**：各保護対象スコープを、許可されたクライアントにだけ optional client scope として付与する。
 
-| 保護するスコープ | 対象audience（そのスコープのaudienceマッパーが指す先） | 付与するクライアント（optional client scope） |
+| 保護するスコープ | 対象audience | 付与するクライアント（optional client scope） |
 |---|---|---|
 | `inventory` | inventory-service | order-service |
 | `warehouse` | warehouse-service | inventory-service |
 | `employee` | employee-service | warehouse-service |
 
-**検証結果**：この設定のみで委任トポロジーが強制されることを確認した。
+**検証結果**（Keycloak 26.4.7 実機）：
 
 - order-service → inventory-service（`scope=inventory`）: 成功。`sub`維持・`aud=inventory-service`・`azp=order-service`
 - inventory-service → warehouse-service（`scope=warehouse`）: 成功。`sub`維持・`aud=warehouse-service`・`azp=inventory-service`
-- order-service → warehouse-service（未許可の飛び越し、`scope`省略）: `invalid_request: Requested audience not available`
-- order-service → warehouse-service（`scope=inventory`を渡し`audience=warehouse-service`を偽装）: 同様に拒否。scopeとaudienceの不一致は個別に検証されており、抜け道はない
+- order-service → warehouse-service（未許可の飛び越し）: `invalid_request: Requested audience not available`
+- order-service → warehouse-service（`scope=inventory`を渡し`audience=warehouse-service`を偽装）: 同様に拒否
 - inventory-service → employee-service（未許可）: `invalid_scope: Invalid scopes: employee`
 
-**結論**：追加のClient Policies（`reject-request`実行アクションやクライアントロールのマーカー）は不要。スコープ絞り込みという要件を満たすためのoptional client scope割り当てが、副産物として委任トポロジー制御も担う。
-
-DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを引き続き使用する（こちらはトポロジー制御とは別目的）。
+DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを引き続き使用する（トポロジー制御とは別目的）。
 
 ## 13. Keycloak realmのコード化
 
+→ [ADR 0008](adr/0008-minimal-realm-export-json.md)
+
 `keycloak/Dockerfile`（`quay.io/keycloak/keycloak:26.4`を継承し`keycloak/realm-export.json`を`--import-realm`で読み込む）を`compose.yml`のビルド対象とする。`docker compose up`のたびに同じ状態が再現される。
 
-realm-export.jsonは**Keycloakの完全な設定ダンプではなく、意図して追加・変更した項目だけ**を書く（realm本体、client scope 4種とaudienceマッパー、client 5種とその設定、テストユーザー4件）。理由：
-
-- Keycloakは指定しなかったフィールドを自身のデフォルト値で補う（realm作成を`{"realm":"...","enabled":true}`だけのリクエストで行っても正しく動くことを確認済み）
-- 完全dumpにはOTPポリシーやセッションタイムアウト等、一度も検討していない大量のデフォルト値が含まれ、どこが自分たちの決定かをレビューで判別できなくなる
-- 実際にこの縮小版（フルエクスポート比で約1/6のサイズ）で`docker compose up --build`からHop1/Hop2成功・未許可経路の拒否まで再現できることを確認済み
-
-縮小版realmを使う上で追加対応が必要だった項目（`sub`クレームマッパーの明示、`KC_HOSTNAME`固定）は[insights.md](insights.md)を参照。
+`realm-export.json`は**意図して追加・変更した項目のみ**を記述する（realm本体、client scope 4種とaudienceマッパー、client 5種とその設定、テストユーザー4件）。縮小版realm設定で追加対応が必要だった項目（`sub`クレームマッパーの明示、`KC_HOSTNAME`固定）は[insights.md](insights.md)を参照。
 
 ## 14. Frontend実装（BFF）の設計
 
@@ -231,7 +203,7 @@ realm-export.jsonは**Keycloakの完全な設定ダンプではなく、意図�
 
 §11で採用したDPoP (RFC 9449) の適用範囲はfrontendのみ。
 
-- **Keycloak**：`frontend`クライアントの属性に`dpop.bound.access.tokens: true`を設定。これだけでKeycloakは(a)トークン発行時にDPoP Proofを必須にし、(b)発行するアクセストークンに`cnf.jkt`（公開鍵のJWK拇印）を埋め込むようになる
+- **Keycloak**：`frontend`クライアントの属性に`dpop.bound.access.tokens: true`を設定。トークン発行時にDPoP Proofを必須にし、発行するアクセストークンに`cnf.jkt`（公開鍵のJWK拇印）を埋め込む
 - **Frontend（BFF）**：鍵ペア生成・Proof JWT署名は`server/utils/dpop.ts`（`jose`ライブラリ、ES256）でサーバーサイドに自前実装。鍵ペアはセッションと同じインメモリストアに保持し、ログイン時に生成した1つの鍵をそのセッション中は使い回す
 - **Order Service・Employee Service**（frontendから直接呼ばれる2サービス）：DPoP Proofの検証を実装。①`typ`ヘッダー確認 ②Proof自体の署名検証 ③Proofの`jwk`から計算したJWK拇印(RFC 7638)とアクセストークンの`cnf.jkt`の一致 ④`htm`/`htu`がリクエストと一致 ⑤`iat`が許容範囲内(±60秒) ⑥`ath`（アクセストークンのSHA-256ハッシュ）が一致
 
@@ -239,123 +211,72 @@ Token Exchangeの呼び出し元がDPoP-boundな場合の交換後トークン�
 
 ## 16. OpenTelemetry分散トレーシングの採用範囲
 
-§10で決めた方針を、5アプリサービス＋Keycloakに実装する（edge-proxyは対象外、後述）。
+§10で決めた方針を、5アプリサービス＋Keycloakに実装する（edge-proxyは対象外）。
 
 - 各サービスとも自動計装を優先し、独自スパンを最小限に留める（Java: Micrometer OTelブリッジ、Go: `otelhttp`、Rust: `axum-tracing-opentelemetry`、Python: `opentelemetry-instrument`ゼロコード計装、Node/Nuxt: `NodeSDK`、Keycloak: `KC_TRACING_ENABLED`）
 - DBレベルのスパンも追加（PostgreSQL/MySQL/MongoDB/H2）。Redis（Warehouse Service）のみ定番の計装ライブラリが無く手動対応
-- **edge-proxy（nginx）は意図的に計装しない**：nginxのOTelモジュールは受信側のスパンしか作れず、Tempoのservice graphが要求するCLIENT側スパンを生成できない。[services.md](services.md)がedge-proxyを「ドメインロジックを持たない純粋なインフラ層」と位置づけていることを踏まえ、CDN/APIゲートウェイ相当の透過的インフラとして扱い、計装自体を撤去した
+- **edge-proxy（nginx）は意図的に計装しない**：nginxのOTelモジュールは受信側のスパンしか作れず、Tempoのservice graphが要求するCLIENT側スパンを生成できない。CDN/APIゲートウェイ相当の透過的インフラとして扱い、計装自体を撤去した
 - 各言語の実装方式の詳細、ヘルスチェックをトレースから除外する方法、DBノードの命名規則、実装中に見つかった罠は[insights.md](insights.md)を参照
 
 ## 17. BFF化とedge-proxyの導入
 
+→ [ADR 0009](adr/0009-bff-with-edge-proxy.md)
+
 OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）に従い、アクセストークンをブラウザに渡さないBFF構成を採用する。
 
 - **Frontendのサーバー化**：`frontend/`をNuxt（Nitro）の単一コンテナとし、ログイン処理・トークン保有をサーバーサイド（`server/api/*`）に完全に閉じる（§14）
-- **edge-proxyの新設**：`edge-proxy/`（nginx）をfrontendの前段に配置し、ホストに公開する唯一の入口とする。`/realms/*`・`/resources/*`はKeycloakへ、それ以外はfrontendへ振り分ける。ブラウザから見えるオリジンを単一化し、CDN/APIゲートウェイ的な構成を模す。実運用でこの位置に来るのはアプリケーションプロセスとは別のコンポーネント（CDN/ゲートウェイ）であるため、frontendがリバースプロキシを兼ねる構成は採らない
-- **Keycloakのホスト直接公開を廃止**：`KC_HOSTNAME`をedge-proxyの公開アドレス（`http://localhost:3000`）に固定し、Keycloakコンテナ自体のホストポート公開を削除。ブラウザ・バックエンドサービスのどちらも最終的に単一の`iss`値に到達する
-- **frontendクライアントを機密クライアント化**：`publicClient: false`＋`secret`、`standard.token.exchange.enabled: true`（BFFが自分自身のクライアントとしてToken Exchangeを行うため）。`directAccessGrantsEnabled`はテストハーネス（`permission-matrix.sh`のパスワードグラントによるユーザートークン取得）のためにあえて`true`のまま残す。BFF自体はAuthorization Code + PKCEのみ使用する
-- **各サービスのホストポート公開を削除**：各マイクロサービス・DBのホスト経由直接アクセスが不要になったため、`ports:`定義を全て削除（edge-proxyの3000のみ公開）
-- **CORS設定の削除**：Order Service・Employee Serviceはブラウザから直接呼ばれないため、両サービスのCORS設定を削除
+- **edge-proxyの新設**：`edge-proxy/`（nginx）をfrontendの前段に配置し、ホストに公開する唯一の入口とする。`/realms/*`・`/resources/*`はKeycloakへ、それ以外はfrontendへ振り分ける
+- **Keycloakのホスト直接公開を廃止**：`KC_HOSTNAME`をedge-proxyの公開アドレス（`http://localhost:3000`）に固定。ブラウザ・バックエンドサービスのいずれも同一の`iss`値に到達する
+- **frontendクライアントを機密クライアント化**：`publicClient: false`＋`secret`、`standard.token.exchange.enabled: true`。`directAccessGrantsEnabled`はテストハーネス（`permission-matrix.sh`）のためにあえて`true`のまま残す
+- **各サービスのホストポート公開を削除**：edge-proxyの3000のみ公開
+- **CORS設定の削除**：Order Service・Employee ServiceはBFF経由でのみ呼ばれるため
 
 ## 18. 既知の制約として受容した事項
 
 ### 内部サービス間チェーンへのDPoP非適用
 
-Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない。根拠は以下の通り。
-
-- DPoP が防ぐのは「トークンだけが盗まれた場合の再利用」である。内部チェーンのトークンはすべて Docker private network 内にのみ存在し、ブラウザや外部ネットワークには出ない。frontendクライアントのトークンと脅威モデルが異なる
-- 仮に内部トークンが盗まれても、`aud` クレームによって提示できるサービスが一つに限定される。他サービスへ横展開するには Token Exchange が必要で、それにはそのサービスのクライアント認証情報も要る。クライアント認証情報まで盗まれた時点でサービス自体が侵害されており、トークン再利用より大きな問題になっている
-- 残るリスク（TTL内の `aud` 一致サービスへの直接再提示）は短TTLで緩和する
-- 内部サービス間の送信者拘束が本番要件になる場合は mTLS（RFC 8705）が適切な対策であり、§11に選択肢として付記している
+Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない。内部チェーンのトークンは全て Docker private network 内にのみ存在し、ブラウザや外部ネットワークには出ない。残るリスク（TTL内の `aud` 一致サービスへの直接再提示）は短TTLで緩和する。内部サービス間の送信者拘束が本番要件になる場合は mTLS（RFC 8705）が適切な対策。→ [ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)
 
 ### issuerの「localhost」感・ポート番号残存
 
-edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には`localhost`という文字列とポート番号が残っている。実運用のIdP（例: `https://accounts.google.com`）はどちらも持たないため、違和感自体は正当な指摘。
+edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には`localhost`という文字列とポート番号が残っている。解消するにはホストマシンの`/etc/hosts`に偽のホスト名を追加し edge-proxy をポート80で公開する必要があり、「ローカルで docker compose 一発で動く」という本リポジトリの前提を損なうため、現状を維持する。
 
-- どちらも解消するには、ホストマシンの`/etc/hosts`に偽のホスト名（例: `kikan-system.local`）を追加し、edge-proxyをポート80で公開する必要がある。これはリポジトリ外（クローンした各人の環境）への変更を要求するため、「ローカルでdocker compose一発で動く」というこのリポジトリの前提を損なう
-- 検討の結果、現状（`http://localhost:3000`）を維持し、既知の制約として本節に明記するのみとした
+## 19. アプリ層の認可DENYログ（異常検知・デバッグ用）
 
-## 19. アプリ層の認可DENYログ（監査ではなく異常検知・デバッグ用）
+→ [ADR 0010](adr/0010-authz-deny-log-for-debugging.md)
 
-### 業務的な認可判断は「監査」の対象にならない
+アプリ層の認可拒否は「監査」ではなく「**異常検知・デバッグの手がかり**」として位置づけ、DENYのみを専用の`authz_deny`ログ行として記録する。
 
-当初、UC4（[use-cases.md](use-cases.md)）の支店不一致による引当拒否のような、アプリ層の認可判断（PERMIT/DENY、その根拠）が既存の`access_log`（status=403とpath）だけでは追えないことを課題とし、§9・§10と同じ「監査」の枠組みで構造化ログを追加しようとした。しかし冷静に考えるとこれは§9・§10の監査設計とは性質が異なり、「監査」と呼ぶのは正確ではない。
-
-- §9・§10のTOKEN_EXCHANGE突合・jti重複検出は、**独立した2つのソース**（Keycloak自身のイベントログ、各サービス自身のaccess_log）を突き合わせて矛盾を検出する。§10が「自己申告ヘッダ（例: `X-Delegation-Chain`）は署名も検証もされず認可判断の根拠にできない」と明記している通り、片方だけの自己申告は認可判断の根拠になりえない
-- 一方、アプリ層の認可判断ログは、**判断を下した当のコード自身**が「PERMITした」「DENYした」と記録するものであり、構造的にはまさにこの「自己申告」に当たる。`authorize_branch`にバグがあり誤ってPERMITしても、ログは（誤った理由づけで）追認するだけで、突き合わせる独立した第二のソースが存在しない。判断の正しさを検証する力を持たない
-- さらにDENY自体はUC4のように業務ルール通りの正常系の一部であり、不正の兆候ではない。「監査」という語を使うと規約違反の摘発であるかのように読めてしまい、実態と合わない
-- PERMITを記録する価値はほぼない。`access_log`のstatus=200/201自体が既にPERMITの事実そのものであり、`decision: "PERMIT"`という行を足しても情報量は増えない
-
-### 採用：DENYのみを記録する`authz_deny`ログ行（異常検知・デバッグ用）
-
-上記を踏まえ、「監査」ではなく「異常検知・デバッグの手がかり」として位置づけを改め、範囲をDENYのみに絞った。
-
-- **用途**：(1) 同一`sub`から特定の`reason`（例：`branch_mismatch`）のDENYが短時間に連発するような**異常の兆候の検知**（ログイン失敗の監視と同種の考え方）、(2) 「なぜこの受注はREJECTEDになったのか」を追う**サポート・デバッグ**。判断の正しさを立証する監査証跡としては使わない
-- **フィールド**：`type`（固定値`"authz_deny"`）・`sub`・`jti`・`trace_id`（`access_log`と同じ値で`trace_id`突合可能）・`reason`
+- **フィールド**：`type`（固定値`"authz_deny"`）・`sub`・`jti`・`trace_id`・`reason`
 - **記録箇所**：
-  - Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`、permission-matrix.md 表5）：RBAC段階の`role_missing`、ABAC段階の`branch_mismatch`／`employee_branch_unknown`を`branch`・`employee_branch`フィールドとともに記録
-  - Inventory Service（[auth.go](../inventory-service/auth.go)の`authMiddleware`、permission-matrix.md 表3）：RBAC判定の`role_missing`を`required_roles`フィールドとともに記録
-- **対象を両サービスに限定した理由**：Order Service（表2）・Employee Service（表4）の判定は「ロールの有無」の1軸のみで、`access_log`のstatus=403だけで理由が読み取れる（ロールが無かった、以外の理由がない）。表3・表5は複数の判定軸（ロール種別、ロールとABAC一致/不一致）を持ち、`reason`フィールドを持つ専用ログの価値がある
-
-### 不採用：`access_log`への埋め込み
-
-`access_log`の1行に`reason`を追加する案は採らなかった。`access_log`は5サービス共通の一定の形（method/path/status/duration_ms/sub/jti/trace_id）を保っており、認可判断のないエンドポイント（例：`/health`）にまで`reason`フィールドを持たせると常に`null`が並ぶ。別行に分けることで`access_log`の形を崩さず、DENYが発生した箇所でのみログが増える。
-
-### 監査ツールとの関係
-
-`audit/audit.py`の既存チェック（CHECK1〜3）は`type = "access_log"`でLogQLフィルタしており、`authz_deny`行は無関係のため影響しない。`authz_deny`ログを使った異常検知（同一subからの`reason`頻発検知など）の追加は今回のスコープ外で、[backlog.md](backlog.md)へ改めて起票する。
+  - Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`authorize_branch`）：`role_missing`・`branch_mismatch`・`employee_branch_unknown`を`branch`・`employee_branch`フィールドとともに記録
+  - Inventory Service（[auth.go](../inventory-service/auth.go)の`authMiddleware`）：`role_missing`を`required_roles`フィールドとともに記録
+- `audit/audit.py`の既存チェック（CHECK1〜3）は`type = "access_log"`でフィルタしており、`authz_deny`行は無関係のため影響しない
 
 ## 20. 層の責務逆転（UC8/UC9/UC10）の是正
 
+→ [ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)
+
 ### 原則
 
-[services.md](services.md)が定義する存在意義に立ち返ると、Warehouse Serviceは「特定拠点の実運用在庫データを持つ、組織的に独立した**拠点システム**」であり、支店別在庫・支店別アクセス制御（RBAC+ABAC、permission-matrix.md 表5）はその存在意義そのものである。一方Inventory Serviceは「商品カタログ横断の**集計・ルーティング層**」であり、「支店が違っても答えは同じであり、拠点別のアクセス制御はここでは行わない」と明記されている。Order Serviceの提供機能は受注登録・受注照会の2つのみで、支店別在庫照会はそもそも宣言された守備範囲に含まれない。
-
-つまり支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在し、Order Service・Inventory Serviceはこの判断について発言権を持たない。
-
-### 何が誤っていたか
-
-UC8/UC9（[use-cases.md](use-cases.md)）実装時、Order Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの両方が、Warehouse Service固有のロール（`warehouse-viewer`/`warehouse-viewer-all`）を直接チェックしていた。
-
-- Order Service側：他の受注系エンドポイントに倣い`@PreAuthorize`でロールを明示しようとした結果、自分の守備範囲にないロール名を借用してしまった
-- Inventory Service側：`authMiddleware`が非空の`requiredRoles`を要求する実装だったため、機能させるためにWarehouse Serviceのロール名を渡さざるを得なかった
-
-どちらも「Warehouse Service側のロール体系が変わればOrder Service/Inventory Serviceも追随変更が必要になる」という結合を生み、UC4で確立した層分離の原則と矛盾していた（[backlog.md](backlog.md)「UC8/UC9における層の責務逆転」として起票、本節で解消）。
+[services.md](services.md)が定義する存在意義に従い、支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在する。Order Service・Inventory Serviceはこの判断について発言権を持たない。
 
 ### 採用：質問の形を「支店Xは？」から「私は何が見える？」に変える
 
-Order Service・Inventory Serviceからロールチェックを取り除くだけでは、単に判断が「無くなる」だけで、UC8/UC9の画面がやりたいこと（見える範囲の実在庫を見せる）の設計としては未完成である。加えて、支店を指定させて権限エラーを返す形のままだと、「エラーを握りつぶして正常応答にすり替えたくなる」という別の誘惑を生む（検討の経緯は次項）。そこで、エンドポイント自体の質問の形を変えた。
-
-- 旧：「支店Xの在庫は？」（`GET /warehouse/:branch/stock/:product_id`）→ 権限がなければ403
-- 新：「**私が見える支店**の在庫は？」（`GET /warehouse/stock/:product_id`、支店をパスに含めない）→ 常に200。ABACの範囲がそのままレスポンスの支店集合になる
+- 旧：`GET /warehouse/:branch/stock/:product_id`（支店を呼び出し元が指定）→ 権限がなければ403
+- 新：`GET /warehouse/stock/:product_id`（支店をパスに含めない）→ 常に200。**自分が見える支店の在庫のみを返す**
 
 具体的な実装：
 
-- Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`get_stock_by_branches`）：RBAC（`warehouse-viewer`/`warehouse-viewer-all`のいずれも無ければ403、UC9）はそのまま残す。`warehouse-viewer-all`は自分のRedisキー（`stock:*:{product_id}`）をスキャンしてこの商品の実在庫を持つ全支店を返す（UC8）。`warehouse-viewer`はEmployee Serviceで確認した自分の支店1件のみを返し、該当データが無ければ空集合を返す（UC10。エラーではなく正直な「該当なし」）
-- Inventory Service（[main.go](../inventory-service/main.go)・[auth.go](../inventory-service/auth.go)・[handlers.go](../inventory-service/handlers.go)）：`/warehouse-stock/{productId}`（支店なし）。`requiredRoles`は`nil`（認証のみ）で、レスポンスは解釈せずそのまま中継
-- Order Service（[WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)・[InventoryClient.java](../order-service/src/main/java/com/example/orderservice/InventoryClient.java)）：`@PreAuthorize`なし、`/warehouse-stock/{productId}`を中継
-- 権限判定の権威はWarehouse Serviceに一本化されたまま。UC9（ロール無し）の403だけは変更前と同じくOrder Serviceまで透過的に伝播する
-
-### 検討した代替案：403を握りつぶして正常応答にする
-
-Inventory Serviceに実在感を持たせるため、「Warehouse Serviceの403（アクセス権が無い）を、Inventory Service側で在庫0件・不明といった正常応答にすり替える」という案を検討したが、不採用にした。
-
-- **支店を指定させる形のままこれをやると虚偽になる**：本当は在庫があるのに「0件」と返すのは、その支店の実数値を偽って伝えることであり、UC8/UC9の画面の存在目的（正しい実数値を見せる）そのものを破壊する
-- **「403の意味を知ること」自体は問題ない**：403がアクセス拒否を意味するというのはAPI契約として公開された情報であり、これを知ること自体はWarehouse Serviceのロール名を知ることとは違う（実際、引当フロー`reserveAtWarehouse`は既に403/409を同一視しており、これは問題視されていない）。問題があるとすれば「握りつぶして偽の値に差し替える」という**結果**の方だった
-- 採用した「見える範囲を返す」形にした結果、ABAC不一致はそもそも403として発生しなくなり（UC10）、この論点自体が実質的に解消した。残るUC9の403（ロールが全く無い＝この画面の利用資格が無い）は、UC3/UC7と同種の「対象外の人です」という明示エラーとして、握りつぶさずそのまま伝播させる
-
-### 検討した代替案：Inventory Serviceに複数支店の引当ルーティングを持たせる
-
-「Inventory Serviceの存在意義を出すため、引当時にアクセス権のある倉庫から在庫の多い順に選ぶ、足りなければ複数支店からかき集める」という案も検討したが、不採用にした。
-
-- architecture.md §1が明言する本サンプルの目的は「アクセス権の照会・制御」であり、§6は「所属支店に応じて照会できる支店が制限される」ことをユースケースの核と位置づけている。倉庫横断のルーティング知能は物流最適化としての実在感（軸A）を足すが、この核（軸B）を迂回する方向に働く
-- 委任チェーンで元ユーザーのsubが最後まで維持されるため、Warehouse Serviceの表5判定は常に元ユーザー本人のABAC可視範囲で行われる。Inventory Serviceがどれだけ賢く経路を選んでも、本人のABACを超えた支店は選べない。テストユーザーの中に`order-writer`と`warehouse-viewer-all`を両方持つ人物がいないため、複数支店から選ぶという分岐が実際に効く場面が無く、効いたとしてもUC8が既に示す「`warehouse-viewer-all`はABACを上書きする」という論点の再演にしかならない
-- 「発注者個人のアクセス権が会社の引当能力を制限してよいか」という、より根本的な認可モデルの妥当性を問う論点は残るが、これはUC1〜UC4全体の設計を見直す規模の話であり、本節のスコープを超える
+- Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`get_stock_by_branches`）：RBAC（ロールが全く無ければ403、UC9）はそのまま残す。`warehouse-viewer-all`はこの商品の実在庫を持つ全支店を返す（UC8）。`warehouse-viewer`は自分の支店1件のみを返し、該当データが無ければ空集合（UC10。エラーではなく正直な「該当なし」）
+- Inventory Service（[main.go](../inventory-service/main.go)）：`/warehouse-stock/{productId}`（支店なし）。`requiredRoles`は`nil`（認証のみ）で、レスポンスは解釈せずそのまま中継
+- Order Service（[WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)）：`@PreAuthorize`なし、`/warehouse-stock/{productId}`を中継
+- UC9の403（ロールが全く無い）だけはOrder Serviceまで透過的に伝播する
 
 ### なぜOrder Serviceを経由すること自体は問題ないか
 
-frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。したがってfrontend発の要求がWarehouse Serviceに到達するには、業務ドメインとして関係があるかどうかに関わらずOrder Service→Inventory Serviceの経路を通るほかない。Order Service・Inventory Serviceがこの機能について中継に徹するのは、この委任トポロジー上の制約に対して誠実な実装であり、両サービスがこの業務について権限判断の権威を持たないことと矛盾しない。
+frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。Order Service・Inventory Serviceがこの機能について中継に徹するのは、委任トポロジー上の制約に対して誠実な実装であり、両サービスがこの業務について権限判断の権威を持たないことと矛盾しない。
 
 ### 支店マスタへの暗黙依存という残存課題
 
-Warehouse Serviceの在庫キー（`stock:{branch}:{product_id}`、[db/seed.sh](../warehouse-service/db/seed.sh)）とEmployee Serviceの社員の所属支店フィールドは、どちらも`tokyo`/`osaka`という同じ文字列を使っているが、どちらかが他方の正典（マスタ）というわけではなく、単に同じ文字列を各サービスが独立に採用しているだけである。`get_stock_by_branches`の支店列挙は**Warehouse Serviceが自分の保有データ（Redisキー）だけをスキャンする**ことでこの問題を回避している（マスタへの問い合わせではなく、自分の在庫の列挙）。ただし将来「支店コードの正当性検証」「支店選択ドロップダウン」のように支店マスタそのものを参照する要件が生じた場合、マイクロサービスにおける典型的な参照データ（マスタデータ）共有問題が顕在化する。対処パターン（権威サービスへの都度問い合わせ、非同期レプリケーション、専用の参照データサービス）はいずれも本サンプルの現状のスコープでは過剰であり、現時点では対応しない。
+Warehouse Serviceの在庫キー（`stock:{branch}:{product_id}`）とEmployee Serviceの社員の所属支店フィールドは同じ文字列（`tokyo`/`osaka`）を各サービスが独立に採用しているだけで、どちらかが正典（マスタ）というわけではない。`get_stock_by_branches`はWarehouse Serviceが自分の保有データ（Redisキー）だけをスキャンすることでこの問題を回避している。将来「支店マスタそのものを参照する要件」が生じた場合、マイクロサービスにおける参照データ共有問題が顕在化する。現時点では対応しない。
