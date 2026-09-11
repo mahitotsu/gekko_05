@@ -61,7 +61,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 [Employee Service: Python]  ── 属性局。ユーザーの所属・権限情報を提供する。委任チェーンの終端
 ```
 
-「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)、§12で実機検証済み）。
+「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)、設計は§12）。
 
 各サービスの存在意義・提供機能・保有データは[services.md](services.md)、具体的な業務シナリオは[use-cases.md](use-cases.md)、認可のディシジョンテーブルは[permission-matrix.md](permission-matrix.md)を参照。
 
@@ -161,11 +161,11 @@ frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti
 
 ### 不採用: mTLS(RFC 8705) Certificate-Bound Access Tokens
 
-サービスメッシュ前提でインフラコストが重く、本サンプルのスコープ外（本番導入時の選択肢として付記するに留める）。
+本サンプルのスコープ外（不採用の理由は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照）。
 
-## 12. 委任トポロジー制御（実機検証済み・Client Policies不要）
+## 12. 委任トポロジー制御（Client Policies不要）
 
-→ [ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)
+→ [ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)（実機検証結果も同ADRを参照）
 
 **設計（許可ベース）**：各保護対象スコープを、許可されたクライアントにだけ optional client scope として付与する。
 
@@ -174,14 +174,6 @@ frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti
 | `inventory` | inventory-service | order-service |
 | `warehouse` | warehouse-service | inventory-service |
 | `employee` | employee-service | warehouse-service |
-
-**検証結果**（Keycloak 26.4.7 実機）：
-
-- order-service → inventory-service（`scope=inventory`）: 成功。`sub`維持・`aud=inventory-service`・`azp=order-service`
-- inventory-service → warehouse-service（`scope=warehouse`）: 成功。`sub`維持・`aud=warehouse-service`・`azp=inventory-service`
-- order-service → warehouse-service（未許可の飛び越し）: `invalid_request: Requested audience not available`
-- order-service → warehouse-service（`scope=inventory`を渡し`audience=warehouse-service`を偽装）: 同様に拒否
-- inventory-service → employee-service（未許可）: `invalid_scope: Invalid scopes: employee`
 
 DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを引き続き使用する（トポロジー制御とは別目的）。
 
@@ -277,9 +269,9 @@ edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には
 - Order Service（[WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)）：`@PreAuthorize`なし、`/warehouse-stock/{productId}`を中継
 - UC9の403（ロールが全く無い）だけはOrder Serviceまで透過的に伝播する
 
-### なぜOrder Serviceを経由すること自体は問題ないか
+### 権限トークンの取得経路の制約
 
-frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。Order Service・Inventory Serviceがこの機能について中継に徹するのは、委任トポロジー上の制約に対して誠実な実装であり、両サービスがこの業務について権限判断の権威を持たないことと矛盾しない。
+frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。Order Service・Inventory Serviceがこの機能について中継に徹する設計の妥当性は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照。
 
 ### 支店マスタへの暗黙依存という残存課題
 
