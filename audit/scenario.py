@@ -8,9 +8,15 @@ Keycloak の KC_HOSTNAME は http://localhost:3000 (edge-proxy の公開 URL) �
 コンテナ内からは localhost:3000 が解決できない。
 FRONTEND_URL を http://edge-proxy:3000 に設定することで、
 リダイレクト URL を Docker 内部名に書き換えてフローを辿る。
+
+正規シナリオに加えて、Token Exchange を経ないバイパスアクセスを1件生成する
+（run_bypass_attempt）。監査ツール（audit/audit.py CHECK2）が実際に不正を検知する
+様子をデモするための、意図的な異常系トラフィック。
 """
 
+import base64
 import html
+import json
 import os
 import re
 import time
@@ -21,6 +27,14 @@ import requests
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://edge-proxy:3000")
 # Keycloak が認知している公開 URL (KC_HOSTNAME 値)
 PUBLIC_URL = "http://localhost:3000"
+# コンテナ内からはdocker内部名でKeycloak・各サービスに直接到達できる
+# （scenarioコンテナも他サービスと同じdocker networkに参加しているため）。
+KEYCLOAK_INTERNAL_URL = os.environ.get(
+    "KEYCLOAK_INTERNAL_URL", "http://keycloak:8080/realms/kikan-system"
+)
+INVENTORY_SERVICE_URL = os.environ.get(
+    "INVENTORY_SERVICE_BASE_URL", "http://inventory-service:8082"
+)
 
 
 def rewrite(url: str) -> str:
@@ -105,6 +119,71 @@ def run_scenario(username: str, password: str, label: str, steps: list[tuple]) -
     time.sleep(0.5)
 
 
+def decode_jwt_claims(access_token: str) -> dict:
+    payload = access_token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+def run_bypass_attempt() -> None:
+    """Token Exchangeを経ないバイパスアクセスを1件生成する（監査デモ用）。
+
+    order-service自身のクライアント資格情報（client_id/client_secret）で、
+    Token Exchange専用に割り当てられているはずのoptional client scope
+    "inventory"（architecture.md §12のトポロジー制御）を、client_credentials
+    グラントで直接要求する。Keycloakのトポロジー制御はこれを拒否しない
+    ——scopeの付与自体は「このクライアントがinventory-service宛のトークンを
+    持ちうるか」を制御しているだけで、「その入手経路がToken Exchangeか」までは
+    見ていない。結果、audience=inventory-serviceの正当な署名付きトークンが
+    Token Exchangeを一切経由せずに手に入る。
+
+    このトークンは実際にinventory-serviceの署名・issuer・audience検証を
+    通過する（実機確認済み：ロール不足により最終的に403にはなるが、認証自体は
+    成功しX-Subject/X-Jtiがアクセスログに記録される）。Keycloak側にはこの
+    発行に対応するTOKEN_EXCHANGEイベントが存在しない
+    （type="CLIENT_LOGIN"として記録される）ため、audit.py CHECK2が
+    「TOKEN_EXCHANGE記録なし」として検知する。
+    """
+    print(f"\n  ── [バイパスデモ] order-serviceが自分の資格情報でinventory-service宛トークンを直接取得 ──")
+
+    order_service_secret = os.environ.get("ORDER_SERVICE_CLIENT_SECRET", "order-service-secret")
+    try:
+        r = requests.post(
+            f"{KEYCLOAK_INTERNAL_URL}/protocol/openid-connect/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": "order-service",
+                "client_secret": order_service_secret,
+                "scope": "inventory roles",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        access_token = r.json()["access_token"]
+    except Exception as e:
+        print(f"    ✗ client_credentialsでのトークン取得に失敗: {e}")
+        return
+
+    claims = decode_jwt_claims(access_token)
+    print(f"    ✓ Token Exchangeを経ずにaudience={claims.get('aud')}のトークンを取得"
+          f"（sub={claims.get('sub')}, jti={claims.get('jti')}）")
+
+    try:
+        r = requests.get(
+            f"{INVENTORY_SERVICE_URL}/inventory/product-A",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"    ✗ inventory-serviceへの直接アクセスに失敗: {e}")
+        return
+    mark = "✓" if r.status_code < 400 else "✗"
+    print(f"    {mark} inventory-serviceへ直接アクセス  GET /inventory/product-A  → HTTP {r.status_code}"
+          "（Bearer認証自体は通過。これがCHECK2で検知されるべきバイパス）")
+
+    time.sleep(0.5)
+
+
 def main() -> None:
     print(f"\n{'━'*60}")
     print(f"  Token Exchange デモシナリオ")
@@ -149,6 +228,8 @@ def main() -> None:
 
     for username, password, label, steps in scenarios:
         run_scenario(username, password, label, steps)
+
+    run_bypass_attempt()
 
     print(f"\n{'━'*60}")
     print(f"  シナリオ完了。以下を実行して監査を開始してください:")

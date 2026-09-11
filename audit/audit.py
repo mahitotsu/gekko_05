@@ -2,9 +2,14 @@
 """
 Token Exchange 監査スクリプト
 
-3つの不変条件を Loki ログから検証する。実行ログ（クエリ内容・取得件数）は
-標準出力にそのまま流れる。レポートには違反時の識別子（trace_id/jti/sub）
-のみを載せる — 生ログの全件ダンプは行わない（cf. docs/insights.md）。
+各ソース（サービスのアクセスログ、Keycloakのイベントログ）が独立に主張する事実を
+識別子（jti/sub）単位の集合として集め、突き合わせて矛盾がないかを検証する。個々の
+リクエストの流れ（trace_id）を追跡・再現するのではなく集合演算に還元することで、
+トークンのキャッシュ再利用や並列処理といった実装上の変動に依存しない、決定論的な
+判定にする（設計判断の経緯は docs/adr/0012-jti-based-token-exchange-audit.md 参照）。
+
+実行ログ（クエリ内容・取得件数）は標準出力にそのまま流れる。レポートには違反時の
+識別子（jti/sub）のみを載せる — 生ログの全件ダンプは行わない（cf. docs/insights.md）。
 
 実行:  docker compose --profile audit run --rm audit
 """
@@ -19,7 +24,24 @@ import requests
 
 LOKI_URL = os.environ.get("LOKI_URL", "http://otel-lgtm:3100")
 WINDOW_SECONDS = int(os.environ.get("AUDIT_WINDOW_SECONDS", "3600"))
+# CHECK2用：Keycloak TOKEN_EXCHANGEイベントの遡り幅。中継トークンが発行直後ではなく
+# TTL内でキャッシュ再利用された場合、利用時刻はウィンドウ内でも発行（交換）自体は
+# ウィンドウ開始より前に起きていることがある。中継トークンのTTLは60秒
+# （keycloak/realm-export.json、architecture.md §11）なので、余裕を見て5分遡る。
+EXCHANGE_LOOKBACK_SECONDS = int(os.environ.get("AUDIT_EXCHANGE_LOOKBACK_SECONDS", "300"))
 WIDTH = 70
+
+# frontend/order-service：ユーザーのブラウザセッション（BFF）に最も近い層。
+USER_FACING_SERVICES = "frontend|order-service"
+# inventory/warehouse/employee-service：委任チェーンの2ホップ目以降。
+DOWNSTREAM_SERVICES = "inventory-service|warehouse-service|employee-service"
+# Token Exchangeで受け取ったトークンのみを保持するサービス群（=frontend以外の
+# 全バックエンド）。frontendだけは例外で、ブラウザログイン（authorization_code）で
+# 得た「本人のセッショントークン」を保持する——これはToken Exchangeの
+# "subject_token"（交換の入力）であって"発行結果"ではないため、CHECK2の対象には
+# 含めない。Keycloakが"発行した"という記録を持つのは、このセッショントークンを
+# 元に交換されたこれより後の各トークンのみ。
+EXCHANGED_TOKEN_SERVICES = "order-service|inventory-service|warehouse-service|employee-service"
 
 
 # ── Loki クエリ ──────────────────────────────────────────────────────────────
@@ -50,6 +72,9 @@ def query_loki(logql: str, start_ns: int, end_ns: int, limit: int = 5000) -> lis
             parsed.setdefault("_service", labels.get("service", ""))
             entries.append(parsed)
     print(f"    [result] {len(entries)} 件取得")
+    if len(entries) >= limit:
+        print(f"    [warn] limit={limit} に到達。ウィンドウ内の実件数が上限を超えて"
+              f"いる可能性があり、以降の集合突合が不完全になりうる。", file=sys.stderr)
     return entries
 
 
@@ -77,22 +102,23 @@ def header(title: str, desc: str) -> None:
     print(f"  {desc}")
 
 
-# ── CHECK 1: Token Exchange バイパス検出 ─────────────────────────────────────
+# ── CHECK 1: 隣接ホップ間のjti使い回し検出 ───────────────────────────────────
 
 def check1(start_ns: int, end_ns: int) -> bool:
     header(
-        "Token Exchange バイパス検出",
-        "user-facing 層と downstream 層の jti が重複していないことを確認する"
-        "（重複 = Exchangeを経ずに上位層のトークンを下位層に持ち込んでいる）。",
+        "Token Exchange バイパス検出（隣接ホップ間のjti使い回し）",
+        "user-facing層とdownstream層のjtiが重複していないことを確認する"
+        "（重複 = 同一トークンがExchangeを経ずに複数ホップで使い回されている。"
+        "1回のExchangeが要求スコープ次第で複数audienceを持つトークンを生成しうる"
+        "ケースの防御であり、CHECK2の(jti,audience)照合とは独立した観点）。",
     )
 
     user_logs = query_loki(
-        '{service=~"frontend|order-service"} | json | type = "access_log"',
+        f'{{service=~"{USER_FACING_SERVICES}"}} | json | type = "access_log"',
         start_ns, end_ns,
     )
     ds_logs = query_loki(
-        '{service=~"inventory-service|warehouse-service|employee-service"}'
-        ' | json | type = "access_log"',
+        f'{{service=~"{DOWNSTREAM_SERVICES}"}} | json | type = "access_log"',
         start_ns, end_ns,
     )
 
@@ -114,72 +140,115 @@ def check1(start_ns: int, end_ns: int) -> bool:
     return True
 
 
-# ── CHECK 2: TOKEN_EXCHANGE ↔ downstream アクセス対応確認 ────────────────────
+# ── CHECK 2: downstreamで使われた全jtiがKeycloakの発行記録で裏付けられているか ──
+
+def parse_token_exchange_events(kc_logs: list[dict]) -> dict[tuple[str, str], dict]:
+    """Keycloakの生ログ行から (token_id, audience) をキーにした発行記録を作る。
+
+    実機確認済み：KeycloakのTOKEN_EXCHANGEイベントには、発行したトークンのjti
+    （`token_id`フィールド）と要求されたaudienceがそのまま記録される。
+    例: `type="TOKEN_EXCHANGE", ..., audience="inventory-service", ...,
+         token_id="ntrtte:6ff32546-...", ...`
+    この `token_id` の値は、後段サービスのaccess_logに記録される `jti` と完全一致
+    する（同一トークンの同一クレームを別ソースから見ているだけなので当然だが、
+    実ログで突合できることを確認済み）。
+    """
+    records: dict[tuple[str, str], dict] = {}
+    for e in kc_logs:
+        raw = e.get("_raw")
+        if raw is None:
+            continue
+        token_id = kv_extract(raw, "token_id")
+        audience = kv_extract(raw, "audience")
+        if not token_id or not audience:
+            continue
+        user_id = kv_extract(raw, "userId")
+        records[(token_id, audience)] = {"sub": user_id, "_ts_ns": e["_ts_ns"]}
+    return records
+
 
 def check2(start_ns: int, end_ns: int) -> bool:
     header(
-        "TOKEN_EXCHANGE ↔ downstream アクセス対応確認",
-        "downstream サービスへアクセスがあった trace_id ごとに、"
-        "同一traceのKeycloak TOKEN_EXCHANGEイベントの存在を確認する。",
+        "downstreamで使われたjtiの正当性確認",
+        "各バックエンドサービス（frontend以外の全て）で使われた(jti, audience)の組が、"
+        "KeycloakのTOKEN_EXCHANGE発行記録に存在するかを確認する。trace_idではなく"
+        "jti自体で突合するため、同一トークンが複数リクエストに跨ってキャッシュ・"
+        "再利用されても偽陽性にならない（trace_id相関だとリクエスト単位でしか見え"
+        "ないため、正当なキャッシュ再利用が「対応する交換なし」と誤検知されうる）。",
     )
 
-    # status != 401 を除外: 認証失敗（無効トークン）は Exchange の対応証跡を
-    # 求める対象ではない。
     ds_logs = query_loki(
-        '{service=~"inventory-service|warehouse-service|employee-service"}'
-        ' | json | type = "access_log" | status != 401',
+        f'{{service=~"{EXCHANGED_TOKEN_SERVICES}"}} | json | type = "access_log" | status != 401',
         start_ns, end_ns,
     )
-    kc_logs = query_loki('{service="keycloak"} |= "TOKEN_EXCHANGE"', start_ns, end_ns)
-
-    ds_by_trace: dict[str, dict] = {}
-    for e in ds_logs:
-        tid = e.get("trace_id")
-        if tid and tid not in ("-", "") and tid not in ds_by_trace:
-            ds_by_trace[tid] = e
-
-    kc_traces: set[str] = set()
-    for e in kc_logs:
-        tid = (e.get("trace_id") or e.get("traceId") or e.get("TraceId"))
-        if not tid and "_raw" in e:
-            tid = kv_extract(e["_raw"], "traceId") or kv_extract(e["_raw"], "trace_id")
-        if tid and tid not in ("-", ""):
-            kc_traces.add(tid)
-
-    missing = sorted(
-        (t for t in ds_by_trace if t not in kc_traces),
-        key=lambda t: ds_by_trace[t]["_ts_ns"],
+    # exchangeイベントの取得だけウィンドウ開始をEXCHANGE_LOOKBACK_SECONDS遡る
+    # （キャッシュされたトークンの発行時刻がウィンドウより前になりうるため）。
+    kc_logs = query_loki(
+        '{service="keycloak"} |= "TOKEN_EXCHANGE"',
+        start_ns - EXCHANGE_LOOKBACK_SECONDS * int(1e9), end_ns,
     )
+    exchanged = parse_token_exchange_events(kc_logs)
 
-    print(f"  downstream trace 数        : {len(ds_by_trace)}")
-    print(f"  TOKEN_EXCHANGE 対応確認済み : {len(ds_by_trace) - len(missing)}")
-    if missing:
-        print(f"  ✗ TOKEN_EXCHANGE 未記録 {len(missing)} 件:")
-        for tid in missing:
-            e = ds_by_trace[tid]
-            print(f"    trace_id={tid}  {e['_service']} {e.get('method','')} {e.get('path','')}"
-                  f"  sub={e.get('sub','-')}  at {ts_str(e['_ts_ns'])}")
-        return False
-    if not ds_by_trace:
-        print("  （対象ログなし：ウィンドウ内に downstream アクセスがなかった）")
-        return True
-    print("  ✓ 全 trace に TOKEN_EXCHANGE イベントが対応")
-    return True
+    # (jti, audience) ごとに集約する：同一トークンが何度使われても1件として扱う
+    # ——これが「trace単位」ではなく「トークン単位」で監査するということ。
+    seen: dict[tuple[str, str], dict] = {}
+    for e in ds_logs:
+        jti = e.get("jti")
+        if not jti or jti in ("-", ""):
+            continue
+        audience = e.get("_service")
+        key = (jti, audience)
+        if key not in seen:
+            seen[key] = e
+
+    no_record = []
+    sub_mismatch = []
+    for (jti, audience), e in seen.items():
+        record = exchanged.get((jti, audience))
+        if record is None:
+            no_record.append((jti, audience, e))
+        elif record["sub"] and record["sub"] != e.get("sub"):
+            sub_mismatch.append((jti, audience, e, record["sub"]))
+
+    print(f"  downstream (jti,audience) 数 : {len(seen)}")
+    print(f"  TOKEN_EXCHANGE 記録確認済み  : {len(seen) - len(no_record) - len(sub_mismatch)}")
+
+    ok = True
+    if no_record:
+        ok = False
+        print(f"  ✗ TOKEN_EXCHANGE 記録なし {len(no_record)} 件"
+              "（Exchangeを経ずに発行された、または全く別経路のトークン）:")
+        for jti, audience, e in sorted(no_record, key=lambda v: v[2]["_ts_ns"]):
+            print(f"    jti={jti}  audience={audience}  {e.get('method','')} {e.get('path','')}"
+                  f"  sub={e.get('sub','-')}  status={e.get('status','-')}  at {ts_str(e['_ts_ns'])}")
+    if sub_mismatch:
+        ok = False
+        print(f"  ✗ sub不一致 {len(sub_mismatch)} 件（発行時のuserIdと利用時のsubが異なる）:")
+        for jti, audience, e, exchanged_sub in sorted(sub_mismatch, key=lambda v: v[2]["_ts_ns"]):
+            print(f"    jti={jti}  audience={audience}  利用時sub={e.get('sub','-')}"
+                  f"  発行時userId={exchanged_sub}  at {ts_str(e['_ts_ns'])}")
+    if not no_record and not sub_mismatch:
+        if not seen:
+            print("  （対象ログなし：ウィンドウ内にdownstreamアクセスがなかった）")
+        else:
+            print("  ✓ 全downstreamアクセスがTOKEN_EXCHANGE記録と整合")
+    return ok
 
 
-# ── CHECK 3: LOGIN 前アクセスの有無 ─────────────────────────────────────────
+# ── CHECK 3: LOGIN前アクセスの有無 ─────────────────────────────────────────
 
 def check3(start_ns: int, end_ns: int) -> bool:
     header(
         "LOGIN 前アクセスの有無",
-        "アクセスログに現れた各subについて、同一ウィンドウ内にそれ以前の"
-        "Keycloak LOGINイベントが存在するかを確認する"
-        "（LOGINがウィンドウ外の場合は「ウィンドウ内未記録」と報告されるが違反とは限らない）。",
+        "アクセスログに現れた各subについて、それより前にKeycloak LOGINイベントが"
+        "存在するかを確認する。ウィンドウ内にLOGINが見つからない場合は「ウィンドウ"
+        "より前にログインしてセッションを継続している」可能性と区別できないため、"
+        "違反とは扱わず参考情報としてのみ報告する。真の違反はLOGINがアクセスより"
+        "後（＝認証前アクセス）になっているケースのみ。",
     )
 
     svc_logs = query_loki(
-        '{service=~"order-service|inventory-service|warehouse-service'
-        '|employee-service|frontend"} | json | type = "access_log"',
+        f'{{service=~"{USER_FACING_SERVICES}|{DOWNSTREAM_SERVICES}"}} | json | type = "access_log"',
         start_ns, end_ns,
     )
     # Keycloak の実ログは値をダブルクォートで囲む（type="LOGIN"）。閉じクォートまで
@@ -205,25 +274,30 @@ def check3(start_ns: int, end_ns: int) -> bool:
             if uid not in login_ts or ts < login_ts[uid]:
                 login_ts[uid] = ts
 
-    violations = []
+    hard_violations = []  # LOGIN > access：認証前アクセス、真の違反
+    info_only = []        # ウィンドウ内にLOGIN記録なし：違反と断定できない参考情報
     for sub, (access_ts, first_svc) in first_access.items():
         login = login_ts.get(sub)
         if login is None:
-            violations.append((sub, "LOGIN記録なし（ウィンドウ内未記録）", access_ts, first_svc))
+            info_only.append((sub, access_ts, first_svc))
         elif login > access_ts:
-            violations.append((sub, f"LOGINよりアクセスが先行 (LOGIN={ts_str(login)})", access_ts, first_svc))
+            hard_violations.append((sub, login, access_ts, first_svc))
 
     print(f"  ユニーク sub 数       : {len(first_access)}")
-    print(f"  LOGIN 先行確認済み     : {len(first_access) - len(violations)}")
-    if violations:
-        print(f"  ✗ 要確認 {len(violations)} 件:")
-        for sub, reason, access_ts, svc in sorted(violations, key=lambda v: v[2]):
-            print(f"    sub={sub}  {reason}  初回アクセス={ts_str(access_ts)}({svc})")
+    print(f"  LOGIN 先行確認済み     : {len(first_access) - len(hard_violations) - len(info_only)}")
+    if info_only:
+        print(f"  ・ウィンドウ内にLOGIN記録なし（参考情報。違反とは断定しない） {len(info_only)} 件:")
+        for sub, access_ts, svc in sorted(info_only, key=lambda v: v[1]):
+            print(f"    sub={sub}  初回アクセス={ts_str(access_ts)}({svc})")
+    if hard_violations:
+        print(f"  ✗ LOGINよりアクセスが先行（真の違反） {len(hard_violations)} 件:")
+        for sub, login, access_ts, svc in sorted(hard_violations, key=lambda v: v[2]):
+            print(f"    sub={sub}  LOGIN={ts_str(login)}  初回アクセス={ts_str(access_ts)}({svc})")
         return False
     if not first_access:
         print("  （対象ログなし：ウィンドウ内にアクセスがなかった）")
-        return True
-    print("  ✓ 全 sub に LOGIN の先行を確認")
+    elif not info_only:
+        print("  ✓ 全 sub に LOGIN の先行を確認")
     return True
 
 

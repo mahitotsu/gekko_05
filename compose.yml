@@ -305,8 +305,15 @@ services:
     command: ["python3", "scenario.py"]
     environment:
       FRONTEND_URL: http://edge-proxy:3000
+      # バイパスデモ（run_bypass_attempt）用：Keycloak・inventory-serviceへの
+      # 直接到達とorder-serviceの資格情報。他サービスと同じdocker内部名/値。
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/kikan-system
+      INVENTORY_SERVICE_BASE_URL: http://inventory-service:8082
+      ORDER_SERVICE_CLIENT_SECRET: order-service-secret
     depends_on:
       edge-proxy:
+        condition: service_healthy
+      inventory-service:
         condition: service_healthy
 
   # 監査実行: docker compose --profile audit run --rm audit

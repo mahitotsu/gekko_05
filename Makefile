@@ -1,6 +1,8 @@
 .PHONY: audit-scenario audit-report audit-demo audit-clean
 
-# トラフィック生成（3ユーザーのログイン+API呼び出し。Token Exchangeチェーンを実際に発生させる）
+# トラフィック生成（3ユーザーのログイン+API呼び出しでToken Exchangeチェーンを実際に
+# 発生させる。加えてToken Exchangeを経ないバイパスアクセスを1件生成し、
+# audit-reportのCHECK2が実際に検知する様子をデモする）
 audit-scenario:
 	docker compose --profile audit run --rm scenario
 

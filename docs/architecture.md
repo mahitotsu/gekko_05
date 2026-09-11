@@ -135,8 +135,8 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - 各サービスは自分のspanとして親span_idのみを記録する。経路全体の再構築は収集基盤側の責務
 - 可視化用に **`grafana/otel-lgtm`**（Grafana+Tempo+Loki+Prometheus/Mimirが1コンテナに統合された公式イメージ）を docker-compose に追加する。OTLPエンドポイントが1つで完結し設定不要。今回使うのはトレース（Tempo経由）のみ
 - 実装範囲・各言語の計装方式・見つかった罠は[insights.md](insights.md)を参照。edge-proxy（nginx）は意図的に計装しない（同ドキュメント参照）
-- トークン発行・利用記録とアクセスログを`trace_id`で突合する監査ツールを`audit/`に実装済み。デモ手順と実行結果は[audit-demo.md](audit-demo.md)を参照
-- OTelトレースは「経路の可視化」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う（役割が異なるため両方を維持する）
+- トークン発行・利用記録とアクセスログを突合する監査ツールを`audit/`に実装済み。突合キーは`trace_id`ではなく`(jti, audience)`——リクエスト単位の経路相関ではなく、識別子の集合演算に還元することで、トークンのキャッシュ再利用やtrace伝播の途切れに依存しない決定論的な判定にしている（→ [ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)）。デモ手順と実行結果は[audit-demo.md](audit-demo.md)を参照
+- OTelトレースは「経路の可視化・デバッグ」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う（役割が異なるため両方を維持する。監査の正当性判定はKeycloakイベントログ側の`(jti, audience)`にのみ依拠する）
 
 ## 11. トークン漏洩・再提示リスクへの対策
 
