@@ -1,4 +1,49 @@
-.PHONY: audit-scenario audit-report audit-demo audit-clean
+.PHONY: up down stop start build up-build logs ps clean \
+        audit-scenario audit-report audit-demo audit-clean
+
+# -------------------------
+# スタック操作
+# -------------------------
+
+# 全サービスをバックグラウンドで起動
+up:
+	docker compose up -d
+
+# コード変更後にイメージを再ビルドして起動
+up-build:
+	docker compose up -d --build
+
+# 全コンテナを停止・削除（ボリュームは残す）
+down:
+	docker compose down
+
+# コンテナを停止（削除しない。DB データは保持される）
+stop:
+	docker compose stop
+
+# stop で止めたコンテナを再開
+start:
+	docker compose start
+
+# イメージをビルドのみ（起動はしない）
+build:
+	docker compose build
+
+# 全サービスのログをフォロー（Ctrl-C で抜ける）
+logs:
+	docker compose logs -f
+
+# 各コンテナの状態・ポートを確認
+ps:
+	docker compose ps
+
+# コンテナ＋ボリューム（DB データ含む）を完全削除
+clean:
+	docker compose down -v
+
+# -------------------------
+# 監査
+# -------------------------
 
 # トラフィック生成（3ユーザーのログイン+API呼び出しでToken Exchangeチェーンを実際に
 # 発生させる。加えてToken Exchangeを経ないバイパスアクセスを1件生成し、
