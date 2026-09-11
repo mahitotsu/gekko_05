@@ -30,6 +30,16 @@ Keycloak公式ドキュメントは両オプションを「ビルド時オプシ
 - 実機検証で判明：`start-dev`（Keycloakのdevモード起動コマンド）は**コンテナ起動のたびに暗黙の再ビルド（augmentation）を行い**、その際に使われるビルドオプションはDockerfileで焼き込んだ値ではなく、その時点のCLI引数/環境変数から再計算される。つまりdevモードで動かす限り、Dockerfileでのビルド時焼き込みには何の意味もない
 - 対応：`RUN kc.sh build ...`のステップを削除し、`KC_TRACING_ENABLED`/`KC_HEALTH_ENABLED`をcompose.ymlのランタイム環境変数として渡すだけにした（他サービスの`OTEL_SERVICE_NAME`と同じ扱いに統一）。プレーンな`quay.io/keycloak/keycloak:26.4`イメージ＋これらの環境変数だけで機能することを`docker run`単体でも確認済み
 
+### BFFパターンでのログアウトはKeycloakのend-sessionエンドポイントへのリダイレクトが必要
+
+BFF（Backend For Frontend）実装でログアウト処理を「サーバー側セッション削除＋セッションクッキー削除→`/`へリダイレクト」だけで実装すると、**Keycloak側のSSOセッションは生き続ける**。
+
+- 実症状：「ログアウト」クリック後にトップページへ戻り、再度「ログイン」をクリックすると、ユーザーにはログインフォームが一切表示されないまま元と同じユーザーとして認証が完了する。アプリ側から見ると「ログアウトできていない」
+- 原因：OIDCのend-sessionは「このアプリのセッションを破棄する」ことと「Keycloakが管理するSSOセッション（ブラウザのKeycloakクッキー）を終了する」ことの2段階が必要。BFF側のセッション破棄は前者のみ
+- 対応：ログアウト時にKeycloakのend-sessionエンドポイント（`/protocol/openid-connect/logout`）へ `id_token_hint` ＋ `post_logout_redirect_uri` を付けてリダイレクトする。end-sessionエンドポイントがSSOセッション（ブラウザのKeycloakクッキー）を無効化した上で `post_logout_redirect_uri` へ戻してくる
+
+**id_tokenの保持が必要**：`id_token_hint`にはログイン時のIDトークンが必要だが、BFF実装ではダウンストリームAPIアクセスに`access_token`しか使わないため、`id_token`を「不要」として受け取ったまま捨てていた。ログアウト要件を意識しないと`id_token`をセッションに保存するモチベーションが生まれず、見落としやすい。
+
 ## DPoP / nginx
 
 ### Token Exchangeの呼び出し元がDPoP-boundな場合、交換後トークンもDPoP-boundになる
