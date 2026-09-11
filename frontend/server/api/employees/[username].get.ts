@@ -8,10 +8,9 @@ export default defineEventHandler(async (event) => {
   const username = getRouterParam(event, "username");
 
   const employeeServiceToken = await exchangeForAudience(
+    session,
     config.keycloakInternalUrl,
     config.frontendClientSecret,
-    session.dpopKeyPair,
-    session.accessToken,
     "employee-service",
     "employee",
   );

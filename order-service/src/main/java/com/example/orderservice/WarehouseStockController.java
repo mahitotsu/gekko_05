@@ -39,7 +39,7 @@ public class WarehouseStockController {
     @GetMapping("/warehouse-stock/{productId}")
     public ResponseEntity<String> getWarehouseStock(
             @PathVariable String productId, @AuthenticationPrincipal Jwt jwt) {
-        String inventoryToken = tokenExchangeClient.exchange(jwt.getTokenValue(), "inventory-service", "inventory");
+        String inventoryToken = tokenExchangeClient.exchange(jwt, "inventory-service", "inventory");
         try {
             String body = inventoryClient.getWarehouseStock(inventoryToken, productId);
             return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);

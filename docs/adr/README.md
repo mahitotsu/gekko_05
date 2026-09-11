@@ -20,3 +20,4 @@
 | [0010](0010-authz-deny-log-for-debugging.md) | アプリ層認可拒否ログをauthz_denyとして記録（異常検知・デバッグ用） | Accepted |
 | [0011](0011-warehouse-stock-visibility-endpoint.md) | 在庫照会を「支店指定」から「見える範囲を返す」設計に変更（UC8/UC9/UC10） | Accepted |
 | [0012](0012-jti-audience-correlation-for-token-exchange-audit.md) | Token Exchange監査の突合キーをtrace_idから(jti, audience)へ変更 | Accepted |
+| [0013](0013-token-exchange-result-caching.md) | Token Exchange結果をsubject jti単位でキャッシュする（frontend/order-service） | Accepted |

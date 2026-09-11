@@ -4,6 +4,12 @@ import type { DPoPKeyPair } from "./dpop";
 
 export const SESSION_COOKIE_NAME = "gekko_session";
 
+export interface CachedExchangedToken {
+  accessToken: string;
+  /** epoch ms。この時刻を過ぎたら再度Token Exchangeを行う。 */
+  expiresAt: number;
+}
+
 export interface Session {
   username: string;
   roles: string[];
@@ -11,6 +17,13 @@ export interface Session {
   refreshToken?: string;
   dpopKeyPair: DPoPKeyPair;
   createdAt: number;
+  /**
+   * audience文字列をキーに、Token Exchange済みトークンをキャッシュする
+   * （`utils/tokenExchange.ts`の`exchangeForAudience`が読み書きする）。
+   * セッションと同じ寿命を持たせることで、ログアウト・セッション破棄と同時に
+   * キャッシュも自然に消える。
+   */
+  exchangedTokens: Map<string, CachedExchangedToken>;
 }
 
 /**
@@ -21,9 +34,9 @@ export interface Session {
  */
 const sessions = new Map<string, Session>();
 
-export function createSession(data: Omit<Session, "createdAt">): string {
+export function createSession(data: Omit<Session, "createdAt" | "exchangedTokens">): string {
   const sessionId = randomUUID();
-  sessions.set(sessionId, { ...data, createdAt: Date.now() });
+  sessions.set(sessionId, { ...data, createdAt: Date.now(), exchangedTokens: new Map() });
   return sessionId;
 }
 

@@ -155,6 +155,10 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効く（詳細は[insights.md](insights.md)参照）
 - frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
 
+### 交換結果のキャッシュ
+
+frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti, audience)`単位でキャッシュし、`expires_in`が切れるまで同じトークンを使い回す（→ [ADR 0013](adr/0013-token-exchange-result-caching.md)）。上記の短寿命化（60秒TTL）と両立する設計であることを実データで検証済み——監査ツール（`audit/`、[ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)）が`(jti, audience)`で突合するため、キャッシュされたトークンが複数リクエストに跨って再利用されても偽陽性を生まない。inventory-service・warehouse-serviceには未実装（同ADR参照）。
+
 ### 不採用: mTLS(RFC 8705) Certificate-Bound Access Tokens
 
 サービスメッシュ前提でインフラコストが重く、本サンプルのスコープ外（本番導入時の選択肢として付記するに留める）。

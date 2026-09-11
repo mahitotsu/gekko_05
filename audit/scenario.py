@@ -205,6 +205,10 @@ def main() -> None:
                 ("受注作成",         "POST", "/api/orders",
                  {"json": {"customerId": "customer-1", "productId": "product-A", "quantity": 1}}),
                 ("在庫確認(自支店)", "GET",  "/api/warehouse-stock/product-A", {}),
+                # 同一エンドポイントを連続で呼び、frontend/order-serviceの
+                # Token Exchangeキャッシュ（exchangeForAudience/TokenExchangeClient）
+                # が実際に再利用されることを確認する（audit-demo.md参照）。
+                ("在庫確認(キャッシュ再利用確認)", "GET", "/api/warehouse-stock/product-A", {}),
                 ("自身の社員情報",   "GET",  "/api/employees/yamada-sales", {}),
             ],
         ),

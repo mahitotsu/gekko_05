@@ -8,10 +8,9 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event);
 
   const orderServiceToken = await exchangeForAudience(
+    session,
     config.keycloakInternalUrl,
     config.frontendClientSecret,
-    session.dpopKeyPair,
-    session.accessToken,
     "order-service",
     "order",
   );
