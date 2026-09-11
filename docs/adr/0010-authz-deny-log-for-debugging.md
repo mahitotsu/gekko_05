@@ -5,9 +5,10 @@
 
 ## Context
 
-アプリ層の認可判断（特に DENY）を記録するかどうか、記録するなら何を目的としどう位置づけるかを決める必要があった。§6・§7 の監査設計（独立した2ソースを突き合わせて矛盾を検出する）と同じ枠組みで扱えるかも検討した。
+アプリ層の認可判断（特に DENY）を記録するかどうか、記録するなら何を目的としどう位置づけるかを決める必要があった。§6・§7 の監査設計（独立した2ソースを突き合わせて矛盾を検出する）と同じ枠組みで扱えるかも検討したが、以下の理由で別枠と判断した。
 
-アプリ層の認可判断ログは、判断を下したコード自身が記録する「自己申告」であり、判断の正しさを立証する独立した第二のソースが存在しない。また DENY 自体（例: 支店不一致による引当拒否）は業務ルール通りの正常系の一部であり、不正の兆候ではない。
+- アプリ層の認可判断ログは、判断を下したコード自身が記録する「自己申告」であり、判断の正しさを立証する独立した第二のソースが存在しない
+- DENY 自体（例: 支店不一致による引当拒否）は業務ルール通りの正常系の一部であり、不正の兆候ではない
 
 ## Decision
 
@@ -15,9 +16,10 @@
 
 記録フィールド: `type`（固定値 `"authz_deny"`）・`sub`・`jti`・`trace_id`・`reason`
 
-対象サービス:
-- **Warehouse Service**（`authorize_branch`）: RBAC の `role_missing`、ABAC の `branch_mismatch`／`employee_branch_unknown` を `branch`・`employee_branch` フィールドとともに記録
-- **Inventory Service**（`authMiddleware`）: RBAC の `role_missing` を `required_roles` フィールドとともに記録
+| サービス | 判断ロジック | 記録する`reason` |
+|---|---|---|
+| Warehouse Service（`authorize_branch`） | RBAC + ABAC | `role_missing`／`branch_mismatch`／`employee_branch_unknown`（`branch`・`employee_branch`フィールド併記） |
+| Inventory Service（`authMiddleware`） | RBAC | `role_missing`（`required_roles`フィールド併記） |
 
 ## Consequences
 

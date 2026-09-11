@@ -5,14 +5,15 @@
 
 ## Context
 
-Keycloak・5サービス・4種DB・edge-proxy・トレース基盤を含む複数コンテナをローカルで起動・管理するオーケストレーション手段を決める必要があった。
+Keycloak・5サービス・4種DB・edge-proxy・トレース基盤を含む複数コンテナをローカルで起動・管理するオーケストレーション手段を決める必要があった。候補は Docker Compose と Kubernetes。
 
 ## Decision
 
 **Docker Compose** を採用する。
 
+- Kubernetesは、Token Exchangeの意味論を示すという目的に対してオーケストレーション自体の学習コストが過剰であり、本リポジトリのスコープ外と判断した
+
 ## Consequences
 
 - `docker compose up` 一発で全コンポーネントが起動できるシンプルな構成を維持できる。
-- Kubernetes の採用は、Token Exchange の意味論を示すという目的に対してオーケストレーション自体の学習コストが過剰であり、本リポジトリのスコープ外と判断した。
 - Envoy 等のプロキシを使わない方針（ADR 0002）と一貫して、オーケストレーション側の複雑さも最小化する。
