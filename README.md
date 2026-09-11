@@ -50,3 +50,7 @@ make audit-report    # トークン発行・利用記録とアクセスログの
 ```
 
 詳細は[docs/audit-demo.md](docs/audit-demo.md)を参照。
+
+## License
+
+[MIT](LICENSE)
