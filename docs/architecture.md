@@ -83,6 +83,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 - スコープの段階的絞り込み（`order` → `inventory` → `warehouse` → `employee`）
 - 各ホップでの認可判定の違い（ユーザー権限 vs 委任元サービスの正当性）
 - 3ホップ全てをToken Exchange（Delegation）で統一し、`sub`（元ユーザー）を最後まで維持する
+- 業務データに対する認可判断の権威は、そのデータを保有するサービス1つに集約する。他サービスは中継に徹し、判断を持たない（例: 支店別在庫のアクセス制御はWarehouse Serviceのみが行う。詳細は§20）
 
 ## 5. Token Exchange の実装方式
 
@@ -142,26 +143,10 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 
 → [ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)
 
-### 採用: DPoP (RFC 9449)
-
-- クライアント（各サービス）が自分の秘密鍵で署名した証明(DPoP Proof JWT)を`DPoP`ヘッダで毎回送信
-- アクセストークンの`cnf`クレームに公開鍵のハッシュを埋め込み、リソースサーバーは「提示者が本当に鍵を持っているか」を検証する
-- 適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外
-- 実装の詳細・伝播ルールの訂正は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照
-
-### 採用: 交換後トークンの短寿命化
-
-- 内部の委任チェーン（Order→Inventory→Warehouse→Employee）で交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮）
-- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効く（詳細は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)参照）
-- frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
-
-### 交換結果のキャッシュ
-
-frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti, audience)`単位でキャッシュし、`expires_in`が切れるまで同じトークンを使い回す（→ [ADR 0013](adr/0013-token-exchange-result-caching.md)）。上記の短寿命化（60秒TTL）と両立する設計であることを実データで検証済み——監査ツール（`audit/`、[ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)）が`(jti, audience)`で突合するため、キャッシュされたトークンが複数リクエストに跨って再利用されても偽陽性を生まない。inventory-service・warehouse-serviceには未実装（同ADR参照）。
-
-### 不採用: mTLS(RFC 8705) Certificate-Bound Access Tokens
-
-本サンプルのスコープ外（不採用の理由は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照）。
+- **DPoP (RFC 9449)**：適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外。メカニズムの詳細は§15
+- **内部委任チェーンの短TTL化**：Order→Inventory→Warehouse→Employeeで交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮）。実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
+- **Token Exchange結果のキャッシュ**：frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti, audience)`単位でキャッシュし、`expires_in`が切れるまで同じトークンを使い回す。inventory-service・warehouse-serviceには未実装。→ [ADR 0013](adr/0013-token-exchange-result-caching.md)
+- **mTLS(RFC 8705)は不採用**（本サンプルのスコープ外）
 
 ## 12. 委任トポロジー制御（Client Policies不要）
 
@@ -231,11 +216,11 @@ OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）に従い、�
 
 ### 内部サービス間チェーンへのDPoP非適用
 
-Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない。内部チェーンのトークンは全て Docker private network 内にのみ存在し、ブラウザや外部ネットワークには出ない。残るリスク（TTL内の `aud` 一致サービスへの直接再提示）は短TTLで緩和する。内部サービス間の送信者拘束が本番要件になる場合は mTLS（RFC 8705）が適切な対策。→ [ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)
+Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない（§11）。理由・リスク評価は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照。
 
 ### issuerの「localhost」感・ポート番号残存
 
-edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には`localhost`という文字列とポート番号が残っている。解消するにはホストマシンの`/etc/hosts`に偽のホスト名を追加し edge-proxy をポート80で公開する必要があり、「ローカルで docker compose 一発で動く」という本リポジトリの前提を損なうため、現状を維持する。
+edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には`localhost`という文字列とポート番号が残っている。解消方針の検討は[backlog.md](backlog.md)を参照。
 
 ## 19. アプリ層の認可DENYログ（異常検知・デバッグ用）
 
@@ -249,20 +234,17 @@ edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には
   - Inventory Service（[auth.go](../inventory-service/auth.go)の`authMiddleware`）：`role_missing`を`required_roles`フィールドとともに記録
 - `audit/audit.py`の既存チェック（CHECK1〜3）は`type = "access_log"`でフィルタしており、`authz_deny`行は無関係のため影響しない
 
-## 20. 層の責務逆転（UC8/UC9/UC10）の是正
+## 20. 支店在庫照会の認可設計（Warehouse Serviceへの権威集中）
 
 → [ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)
 
 ### 原則
 
-[services.md](services.md)が定義する存在意義に従い、支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在する。Order Service・Inventory Serviceはこの判断について発言権を持たない。
+[services.md](services.md)が定義する存在意義に従い、支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在する。Order Service・Inventory Serviceはこの判断について発言権を持たず、中継に徹する。
 
-### 採用：質問の形を「支店Xは？」から「私は何が見える？」に変える
+### 現在のエンドポイント契約
 
-- 旧：`GET /warehouse/:branch/stock/:product_id`（支店を呼び出し元が指定）→ 権限がなければ403
-- 新：`GET /warehouse/stock/:product_id`（支店をパスに含めない）→ 常に200。**自分が見える支店の在庫のみを返す**
-
-具体的な実装：
+`GET /warehouse/stock/:product_id`（支店をパスに含めない）→ 常に200。**自分が見える支店の在庫のみを返す**。
 
 - Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`get_stock_by_branches`）：RBAC（ロールが全く無ければ403、UC9）はそのまま残す。`warehouse-viewer-all`はこの商品の実在庫を持つ全支店を返す（UC8）。`warehouse-viewer`は自分の支店1件のみを返し、該当データが無ければ空集合（UC10。エラーではなく正直な「該当なし」）
 - Inventory Service（[main.go](../inventory-service/main.go)）：`/warehouse-stock/{productId}`（支店なし）。`requiredRoles`は`nil`（認証のみ）で、レスポンスは解釈せずそのまま中継
@@ -272,7 +254,3 @@ edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には
 ### 権限トークンの取得経路の制約
 
 frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。Order Service・Inventory Serviceがこの機能について中継に徹する設計の妥当性は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照。
-
-### 支店マスタへの暗黙依存という残存課題
-
-Warehouse Serviceの在庫キー（`stock:{branch}:{product_id}`）とEmployee Serviceの社員の所属支店フィールドは同じ文字列（`tokyo`/`osaka`）を各サービスが独立に採用しているだけで、どちらかが正典（マスタ）というわけではない。`get_stock_by_branches`はWarehouse Serviceが自分の保有データ（Redisキー）だけをスキャンすることでこの問題を回避している。将来「支店マスタそのものを参照する要件」が生じた場合、マイクロサービスにおける参照データ共有問題が顕在化する。現時点では対応しない。
