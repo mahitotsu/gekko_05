@@ -15,6 +15,10 @@ export interface Session {
   roles: string[];
   accessToken: string;
   refreshToken?: string;
+  // OIDCログアウト（end-session）でid_token_hintとして渡すために保持する。
+  // Keycloakのend-sessionエンドポイントはid_token_hintがないとログアウトが
+  // 完了しない（SSOセッションが残る）。
+  idToken?: string;
   dpopKeyPair: DPoPKeyPair;
   createdAt: number;
   /**

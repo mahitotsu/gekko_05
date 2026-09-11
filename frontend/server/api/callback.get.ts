@@ -71,6 +71,7 @@ export default defineEventHandler(async (event) => {
     roles,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
+    idToken: tokens.id_token,
     dpopKeyPair,
   });
 
