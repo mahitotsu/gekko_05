@@ -93,7 +93,7 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - `subject_token`の`aud`に要求元クライアントが含まれている必要がある（自分自身のトークンを交換する場合を除く）。Keycloakが交換**時点**でこれを検証するため、権限のないクライアントが他クライアント宛のトークンを流用して交換することはできない
 - 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§9）
 - **RFC 8693 の `act` クレーム（アクター情報）は標準では生成されない**。実験的機能（`token-exchange-delegation`等）には依存せず、Standard V2 のみを使用する（→ [ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）
-- RFC 8693でImpersonationとDelegationを分けるのは`actor_token`（と結果としての`act`クレーム）の有無のみで、`sub`が維持されるかどうかは両方式に共通する性質であり判定基準にならない。本サンプルは`actor_token`を渡さない（上記の通りStandard V2が非対応）ため、厳密には**Impersonation**に分類される（誤解しやすい点の詳細は[insights.md](insights.md)参照）
+- RFC 8693でImpersonationとDelegationを分けるのは`actor_token`（と結果としての`act`クレーム）の有無のみで、`sub`が維持されるかどうかは両方式に共通する性質であり判定基準にならない。本サンプルは`actor_token`を渡さない（上記の通りStandard V2が非対応）ため、厳密には**Impersonation**に分類される（誤解しやすい点の詳細は[insights.md](insights.md)参照。Impersonationであることの制約とトレードオフ上の利点は[ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)参照）
 
 ### リスク評価
 
