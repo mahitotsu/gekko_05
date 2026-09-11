@@ -21,7 +21,7 @@ type="TOKEN_EXCHANGE", ..., audience="inventory-service", ...,
 token_id="ntrtte:6ff32546-3349-41c9-2977-ff73fcf879ca", ..., userId="c98454aa-..."
 ```
 
-この`token_id`は、当該トークンを受け取ったdownstreamサービスのaクセスログに記録される`jti`と完全に一致することを実データで確認済み。
+この`token_id`は、当該トークンを受け取ったdownstreamサービスのアクセスログに記録される`jti`と（プレフィックス`ntrtte:`/`onrtte:`等を含めて）完全に一致することを実データで確認済み。このプレフィックスはKeycloakのToken Exchange V2が内部的に付与するもの（要求元クライアントごとに異なる値になる）で、ロジック側がこの形式に依存する必要はない——単なる文字列としてtrace_idと同様に扱えばよい。
 
 ## Decision
 

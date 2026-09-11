@@ -20,3 +20,4 @@ OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）への準拠�
 - 各マイクロサービス・DB のホストポート公開が不要になり削除。
 - Order Service・Employee Service は BFF 経由でのみ呼ばれるため CORS 設定を削除。
 - `directAccessGrantsEnabled` はテストハーネス（`permission-matrix.sh` のパスワードグラント）のためにあえて `true` のまま残す。BFF 自体は Authorization Code + PKCE のみ使用する。
+- **`KC_HOSTNAME`の固定が必須**：内部（docker network経由、例: `http://keycloak:8080`）と外部（edge-proxy経由、`http://localhost:3000`）でKeycloakへの到達ホスト名が異なると、Keycloakは自分自身のissuerをリクエストごとに動的算出するため、外部で発行されたトークンをサービスが内部経路でToken Exchangeしようとすると`invalid_request: Invalid token`で拒否される。`KC_HOSTNAME`を固定することで解決した（実機で確認）。

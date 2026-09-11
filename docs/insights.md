@@ -15,10 +15,11 @@
 
 新しい気づきを追記する場合は、該当するセクションが無ければ末尾に追加し、既存セクションには同じ構造で末尾に追記する。
 
+**ADRとの分担**：ある技術選択・設計判断を裏付けた検証（「この選択で本当に動くか」を確かめた実機検証や、選択の結果として決まった具体的な設定値の根拠）は、その判断自体を記録する対応ADR（[docs/adr/](adr/)）側に記載する。ここに残すのは、選択そのものとは無関係に生じる実装上の罠・仕様の落とし穴（ライブラリの癖、フレームワークの既定動作、ネットワーキングの事故など）に限る。
+
 ## 目次
 
 - [Keycloak / Realm設計](#keycloak--realm設計)
-- [Token Exchange と DPoP（送信者拘束）](#token-exchange-と-dpop送信者拘束)
 - [Edge Proxy (nginx) / コンテナネットワーキング](#edge-proxy-nginx--コンテナネットワーキング)
 - [OpenTelemetry — 分散トレーシング全般](#opentelemetry--分散トレーシング全般)
 - [Go実装（inventory-service）](#go実装inventory-service)
@@ -31,33 +32,6 @@
 
 <a id="keycloak--realm設計"></a>
 ## Keycloak / Realm設計
-
-### 縮小版realmで`clientScopes`を明示指定すると組み込みscopeがマージされない
-
-**症状**：realm importでは（単純な`POST /admin/realms`でのrealm作成と異なり）`clientScopes`を明示指定すると、Keycloak組み込みの`roles`/`profile`等が一切マージされない。
-
-**対応**：以下を自分で明示する必要があった。
-
-- `sub`クレーム：組み込みでは自動的に付与されず、`oidc-sub-mapper`を`roles`スコープに追加する必要がある（実機で確認：追加前はaccess_tokenに`sub`が一切含まれずToken Exchange時の記録が取れなかった）
-- 所属支店のような社員情報：`roles`スコープに`oidc-usermodel-property-mapper`を追加しないと`preferred_username`以外のクレームが載らない
-
-### Token ExchangeでのTTLは交換先(audience)ではなく交換元(azp)クライアントの`access.token.lifespan`が効く
-
-**背景**：`access.token.lifespan`はクライアント属性としてrealmデフォルトの`accessTokenLifespan`を上書きできるが、Token Exchange V2で発行されるトークンにどちらのクライアント（交換を要求した側／要求先のaudience）の属性が適用されるかはドキュメントに明記がなく、実機で確認した。
-
-**検証方法**：`order-service`クライアントにのみ`access.token.lifespan: "45"`を設定し、`inventory-service`（audience側、属性なし）へのToken Exchangeを実行 → 発行トークンの`expires_in`は45（realmデフォルトの300ではない）。
-
-**結論**：**交換を要求したクライアント（`azp`となるクライアント、＝`client_id`/`client_secret`で認証した側）の`access.token.lifespan`がそのまま適用される**。audience側クライアントの同属性は無関係。
-
-**対応**：委任チェーンでToken Exchangeを要求する3クライアント（order-service/inventory-service/warehouse-service）それぞれに設定する必要がある。1箇所（例えば末端のemployee-service）に設定しても、そのクライアントが要求元にならないホップには効かない（[architecture.md](architecture.md) §11参照）。
-
-### `KC_HOSTNAME`の固定が必要
-
-**症状**：内部（docker network経由、例: `http://keycloak:8080`）と外部（ホストマシン経由、例: `http://localhost:8080`）でKeycloakへの到達ホスト名が異なると、外部で発行されたトークンをサービスが内部経路でToken Exchangeしようとすると`invalid_request: Invalid token`で拒否される。
-
-**原因**：Keycloakは自分自身のissuerをリクエストごとに動的算出するため、到達ホスト名によってissuerが変わってしまう。
-
-**対応**：`KC_HOSTNAME`を固定することで解決した（実機で確認）。
 
 ### `--tracing-enabled`/`--health-enabled`はビルド時に焼き込んでも無意味
 
@@ -76,60 +50,6 @@
 **対応**：ログアウト時にKeycloakのend-sessionエンドポイント（`/protocol/openid-connect/logout`）へ `id_token_hint` ＋ `post_logout_redirect_uri` を付けてリダイレクトする。end-sessionエンドポイントがSSOセッション（ブラウザのKeycloakクッキー）を無効化した上で `post_logout_redirect_uri` へ戻してくる。
 
 **補足（`id_token`保持の必要性）**：`id_token_hint`にはログイン時のIDトークンが必要だが、BFF実装ではダウンストリームAPIアクセスに`access_token`しか使わないため、`id_token`を「不要」として受け取ったまま捨てていた。ログアウト要件を意識しないと`id_token`をセッションに保存するモチベーションが生まれず、見落としやすい。
-
-### Keycloakの`eventsEnabled`はデフォルト`false`：LOGIN/TOKEN_EXCHANGEの成功イベントは最初から一切記録されない
-
-トークン発行と利用の突合監査（`audit/audit.py`、`audit/scenario.py`、[監査ログ・トークン監査（audit/）](#監査ログトークン監査audit)参照）を実装する過程で判明。
-
-**症状**：`backlog.md`には以前から「Keycloakのイベントログには`traceId`が自動付与され突合できる」という記載があったが、これは未検証の思い込みだった。実際に`GET /admin/realms/{realm}/events/config`で確認すると`eventsEnabled: false`で、`eventsListeners: ["jboss-logging"]`は登録されているものの無効化されていた。この状態では成功系イベント（LOGIN, TOKEN_EXCHANGE等）は`eventsListeners`へ一切ディスパッチされない。
-
-紛らわしいのは、DPoP proof欠落等の認証エラー（`LOGIN_ERROR`）は`eventsEnabled`に関係なく別経路でWARNログに出ていたため、「イベントログ自体は機能している」という誤った確信を持ちやすかった点（実際に本セッションもこれで一度誤判定した）。
-
-**対応**：`keycloak/realm-export.json`のトップレベルに`"eventsEnabled": true, "eventsListeners": ["jboss-logging"]`を追加。**この変更はDockerfileの`COPY realm-export.json ...`でイメージに焼き込まれるため、`docker compose build keycloak`でイメージを再ビルドしないと反映されない**（`docker compose up -d keycloak`だけではコンテナは再作成されるが古いイメージのまま）。
-
-### jboss-logging event listenerの成功イベントはデフォルトでDEBUGレベル：`eventsEnabled: true`だけでは足りない
-
-**症状**：`eventsEnabled`を有効化してもなお、LOGIN/TOKEN_EXCHANGEの成功イベントがログに出ない状態が続いた。
-
-**原因**：`JBossLoggingEventListenerProvider`の成功イベントのデフォルトログレベルがDEBUGであること（エラーイベントはWARNがデフォルトで、これは最初から見えていた）。ルートのログレベルがINFOのため、DEBUG出力は素通りしていた。
-
-**対応**：`compose.yml`のkeycloakサービスに`KC_SPI_EVENTS_LISTENER_JBOSS_LOGGING_SUCCESS_LEVEL: "info"`を追加（他のKC_*ランタイム設定と同じ扱い）。
-
-**検証**：実機で確認。追加前は`docker logs`に成功イベントが1行も出ず、追加後は`type="LOGIN"`/`type="TOKEN_EXCHANGE"`が確認できた。
-
-### KeycloakのイベントログにはデフォルトでtraceIdが付与される
-
-Keycloakはjboss-loggingイベントリスナーをデフォルト有効にしており、`KC_TRACING_ENABLED=true`の環境下では`org.keycloak.events`ロガーが出力する各イベントログ行に`traceId=…`フィールドが自動付与される（出力例：`type="LOGIN_ERROR", realmName=…, traceId=50c1168a…`）。
-
-**活用**：各サービスのToken Exchangeリクエストに`traceparent`ヘッダが付与されていれば、**KeycloakのイベントログとOTelトレースをtrace_idで機械的に突合できる**。バックログに「より進んだアプローチ」として記載していた内容が、追加実装なしに既に実現していた。
-
-### KeycloakのTOKEN_EXCHANGEイベントログには発行トークンのjti・audience・userIdがそのまま記録される
-
-`audit.py`のCHECK2を`trace_id`相関から`(jti, audience)`相関へ作り直す過程で確認した（設計変更の経緯は[ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)参照）。
-
-**詳細**：KeycloakのTOKEN_EXCHANGEイベントには`token_id`（発行したトークンのjti）・`audience`（要求されたaudience）・`userId`（対象ユーザーのsub）フィールドがそのまま出力されている。
-
-```
-type="TOKEN_EXCHANGE", ..., audience="inventory-service", ...,
-token_id="ntrtte:6ff32546-3349-41c9-2977-ff73fcf879ca", ..., userId="c98454aa-..."
-```
-
-この`token_id`の値は、当該トークンを受け取ったdownstreamサービスのアクセスログに記録される`jti`と（プレフィックス`ntrtte:`/`onrtte:`等を含めて）完全に一致することを実データで確認済み。このプレフィックスはKeycloakのToken Exchange V2が内部的に付与するもの（要求元クライアントごとに異なる値になる）で、ロジック側がこの形式に依存する必要はない——単なる文字列としてtrace_idと同様に扱えばよい。
-
-**副産物**：`grant_type=client_credentials`でトークンを取得した場合はKeycloakが`type="CLIENT_LOGIN"`イベントを出すことも確認した（`type="TOKEN_EXCHANGE"`ではない）。あるクライアントが自分の資格情報で、本来Token Exchange専用のoptional client scope（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)）を直接要求してaudience付きトークンを取得することは、トポロジー制御そのものでは防げない（scopeの付与は「audienceを持ちうるか」の制御であって「その入手経路がToken Exchangeか」までは見ていない）——これは実際にCHECK2が検知すべき対象として`docs/audit-demo.md`のデモシナリオに組み込んだ。
-
-<a id="token-exchange-と-dpop送信者拘束"></a>
-## Token Exchange と DPoP（送信者拘束）
-
-### Token Exchangeの呼び出し元がDPoP-boundな場合、交換後トークンもDPoP-boundになる
-
-実際のToken Exchange呼び出しを実装して初めて判明した。以前は「Token Exchangeで得る内部トークンには`cnf`が付与されない」と誤って記載していた。
-
-**結論**：`cnf.jkt`が付くかどうかは**Token Exchangeの呼び出し元クライアント自身に`dpop.bound.access.tokens: true`が設定されているか**で決まる（グラント種別に関係なく、そのクライアントへ発行される全トークンに適用される）。Order/Inventory/Warehouse Serviceの各クライアントはこの属性を持たないため交換後トークンは非DPoPになり、frontendクライアント（この属性を持つ）が自ら行うToken Exchangeでは交換後トークンにも`cnf.jkt`が継承される。
-
-**対応**：BFFがOrder/Employee Serviceへ渡す交換後トークンはDPoPで送信する必要がある（`server/utils/dpop.ts`の`callDownstream()`）。Proofの`ath`は実際に送信する交換後トークン（元のセッショントークンではない）のSHA-256ハッシュにする必要がある点に注意。
-
-**検証**：実機検証済み。①DPoP Proof無しでのログイン試行は`DPoP proof is missing`で拒否 ②発行されたトークンを漏洩想定でDPoP Prop無しに素の`Bearer`として再送すると401で拒否（サーバー側の送信者拘束が機能している証拠）。
 
 <a id="edge-proxy-nginx--コンテナネットワーキング"></a>
 ## Edge Proxy (nginx) / コンテナネットワーキング
@@ -417,7 +337,7 @@ event.node.res.on("finish", () => { /* traceIdはクロージャ経由で使う�
 <a id="監査ログトークン監査audit"></a>
 ## 監査ログ・トークン監査（audit/）
 
-トークン発行と利用の突合監査（`audit/audit.py`、`audit/scenario.py`）を実装する過程で、実機検証なしには気づけなかった罠が複数見つかった。いずれも「コードは正しく見えるが実際には動かない/前提が崩れている」パターン。Keycloak自身のイベントログ設定・仕様に関する気づきは[Keycloak / Realm設計](#keycloak--realm設計)に、employee-serviceのロギング実装の罠は[Python実装（employee-service）](#python実装employee-service)にまとめている。
+トークン発行と利用の突合監査（`audit/audit.py`、`audit/scenario.py`）を実装する過程で、実機検証なしには気づけなかった罠が複数見つかった。いずれも「コードは正しく見えるが実際には動かない/前提が崩れている」パターン。Keycloakのイベントログ設定・イベントの内容に関する検証は、その監査設計自体を決めた[ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)・[ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)にまとめている。employee-serviceのロギング実装の罠は[Python実装（employee-service）](#python実装employee-service)を参照。
 
 ### 認可ミドルウェアは「クレーム抽出・記録」を「許可/拒否判定」より前に置く：エラーハンドリングの分岐が監査証跡を消しうる
 

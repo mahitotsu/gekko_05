@@ -125,7 +125,7 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 |---|---|---|
 | `sub`（誰の権利で処理しているか） | 維持される。Keycloak発行トークンで暗号学的に保証 | アクセス権の照会・制御はこれのみで実現可能 |
 | 委任トポロジーのリアルタイム制御 | optional client scopeの割当で実現。不正なホップ飛ばしはKeycloak自身が拒否する | リスクなし |
-| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§10・[insights.md](insights.md)参照） | ログ突合で代替（§10） |
+| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§10・[ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)参照） | ログ突合で代替（§10） |
 
 ## 10. 委任チェーンの事後監査
 
@@ -147,12 +147,12 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - クライアント（各サービス）が自分の秘密鍵で署名した証明(DPoP Proof JWT)を`DPoP`ヘッダで毎回送信
 - アクセストークンの`cnf`クレームに公開鍵のハッシュを埋め込み、リソースサーバーは「提示者が本当に鍵を持っているか」を検証する
 - 適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外
-- 実装の詳細・伝播ルールの訂正は[insights.md](insights.md)を参照
+- 実装の詳細・伝播ルールの訂正は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照
 
 ### 採用: 交換後トークンの短寿命化
 
 - 内部の委任チェーン（Order→Inventory→Warehouse→Employee）で交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮）
-- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効く（詳細は[insights.md](insights.md)参照）
+- 実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。Token Exchangeで発行されるトークンのTTLは**交換を要求した側（`azp`）のクライアント属性**が効く（詳細は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)参照）
 - frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
 
 ### 交換結果のキャッシュ
@@ -191,7 +191,7 @@ DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 
 `keycloak/Dockerfile`（`quay.io/keycloak/keycloak:26.4`を継承し`keycloak/realm-export.json`を`--import-realm`で読み込む）を`compose.yml`のビルド対象とする。`docker compose up`のたびに同じ状態が再現される。
 
-`realm-export.json`は**意図して追加・変更した項目のみ**を記述する（realm本体、client scope 4種とaudienceマッパー、client 5種とその設定、テストユーザー4件）。縮小版realm設定で追加対応が必要だった項目（`sub`クレームマッパーの明示、`KC_HOSTNAME`固定）は[insights.md](insights.md)を参照。
+`realm-export.json`は**意図して追加・変更した項目のみ**を記述する（realm本体、client scope 4種とaudienceマッパー、client 5種とその設定、テストユーザー4件）。縮小版realm設定で追加対応が必要だった`sub`クレームマッパーの明示は[ADR 0008](adr/0008-minimal-realm-export-json.md)、`KC_HOSTNAME`固定は[ADR 0009](adr/0009-bff-with-edge-proxy.md)を参照。
 
 ## 14. Frontend実装（BFF）の設計
 
@@ -211,7 +211,7 @@ DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 - **Frontend（BFF）**：鍵ペア生成・Proof JWT署名は`server/utils/dpop.ts`（`jose`ライブラリ、ES256）でサーバーサイドに自前実装。鍵ペアはセッションと同じインメモリストアに保持し、ログイン時に生成した1つの鍵をそのセッション中は使い回す
 - **Order Service・Employee Service**（frontendから直接呼ばれる2サービス）：DPoP Proofの検証を実装。①`typ`ヘッダー確認 ②Proof自体の署名検証 ③Proofの`jwk`から計算したJWK拇印(RFC 7638)とアクセストークンの`cnf.jkt`の一致 ④`htm`/`htu`がリクエストと一致 ⑤`iat`が許容範囲内(±60秒) ⑥`ath`（アクセストークンのSHA-256ハッシュ）が一致
 
-Token Exchangeの呼び出し元がDPoP-boundな場合の交換後トークンへの伝播ルール、および実装中に踏んだ罠は[insights.md](insights.md)を参照。
+Token Exchangeの呼び出し元がDPoP-boundな場合の交換後トークンへの伝播ルールは[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)、実装中に踏んだ罠（nginx経由でのDPoP検証失敗等）は[insights.md](insights.md)を参照。
 
 ## 16. OpenTelemetry分散トレーシングの採用範囲
 
