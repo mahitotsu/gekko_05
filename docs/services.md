@@ -4,7 +4,7 @@
 
 ## edge-proxy (nginx)
 
-実装済み（`edge-proxy/`。architecture.md §17）。ドメインロジックを持たない純粋なインフラ層のため、認可上の主体ではない。
+実装済み（`edge-proxy/`。architecture.md §14）。ドメインロジックを持たない純粋なインフラ層のため、認可上の主体ではない。
 
 - **存在意義**：ホストに公開する唯一の入口。CDN/APIゲートウェイ相当の位置に置き、ブラウザから見えるオリジンを単一化する
 - **提供機能**：パスベースの振り分けのみ（`/realms/*`・`/resources/*`→Keycloak、それ以外→Frontend）
@@ -13,7 +13,7 @@
 
 ## Frontend (Nuxt / TypeScript, BFF)
 
-実装済み（`frontend/`。architecture.md §14, §17）。
+実装済み（`frontend/`。architecture.md §11, §14）。
 
 - **存在意義**：ユーザー（社員）がシステムに触れる唯一の入口。BFF (Backend for Frontend) として、OIDCログイン・トークン保有・DPoP鍵保有を全てサーバーサイドで行い、ブラウザにはアクセストークンを一切渡さない
 - **提供機能**：ログイン（Authorization Code + PKCE、サーバー側で自前実装）、受注登録・照会画面、社員情報照会画面（自分の情報／HR向け全件）。画面から`/api/*`（同一オリジン）を経由してのみ下流サービスへ到達する

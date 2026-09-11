@@ -1,6 +1,6 @@
 # 権限マップ（ディシジョンテーブル）
 
-architecture.md §9-§13で決めた認可設計を、条件と結果が漏れなく列挙できる形（ディシジョンテーブル）で整理する。性質の異なる認可判断ごとに表を分ける。
+architecture.md §6-§10で決めた認可設計を、条件と結果が漏れなく列挙できる形（ディシジョンテーブル）で整理する。性質の異なる認可判断ごとに表を分ける。
 
 ## 表1: 委任トポロジー（Keycloak層・検証済み）
 
@@ -20,7 +20,7 @@ architecture.md §9-§13で決めた認可設計を、条件と結果が漏れ�
   - order/inventory/warehouse-service→自分自身：各クライアントは自分自身が発行するスコープ（例: order-serviceは`order`スコープ）を持っていないため`invalid_scope`
   - employee-service→どこでも：`standard.token.exchange.enabled=false`のため、対象を問わず`Standard token exchange is not enabled for the requested client`で拒否される（これは全5マスに共通する理由であり、employee-serviceの行は構造的に全DENY）
   - X-service→frontend：frontendを対象にするaudienceマッパーが存在しないため`Requested audience not available: frontend`
-- ALLOWの5マスはすべて `optionalClientScopes` の割当のみで実現している（architecture.md §12）。Client Policiesは使っていない
+- ALLOWの5マスはすべて `optionalClientScopes` の割当のみで実現している（architecture.md §9）。Client Policiesは使っていない
 
 ## 表2: Order Serviceの操作可否（アプリ層・実装済み）
 
@@ -79,7 +79,7 @@ Inventory Serviceとの違いを明確にするため、Warehouse Serviceは2段
 
 この3行×2列＝6ケースに対応する自動テストは未整備。
 
-この表の判定権威はWarehouse Service一箇所にのみ存在する。UC8/UC9/UC10の経路上にあるOrder Service・Inventory Serviceは、本表のロールを判定せずToken Exchangeで中継するのみ。かつてはOrder Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの双方が本表と同じロールを重複判定しており、層の責務分離の課題として[backlog.md](backlog.md)に起票されていたが、この設計変更（経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)参照）で解消済み。
+この表の判定権威はWarehouse Service一箇所にのみ存在する。UC8/UC9/UC10の経路上にあるOrder Service・Inventory Serviceは、本表のロールを判定せずToken Exchangeで中継するのみ（設計判断の経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)参照）。
 
 ## テストユーザー
 

@@ -101,7 +101,7 @@
 
 ### edge-proxyは意図的に計装しない：nginxの otel モジュールは受信側のスパンしか作れない
 
-当初edge-proxy（nginx、`nginx:*-alpine-otel`イメージ + `ngx_otel_module`）にも計装を入れたが、最終的に撤去した（採否の理由はarchitecture.md §16）。
+当初edge-proxy（nginx、`nginx:*-alpine-otel`イメージ + `ngx_otel_module`）にも計装を入れたが、最終的に撤去した（採否の理由はarchitecture.md §13）。
 
 **原因**：
 

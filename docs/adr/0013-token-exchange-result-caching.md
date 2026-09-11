@@ -19,7 +19,7 @@
 
 ## Consequences
 
-- frontendの中継トークン（audience=order-service/employee-service）はrealmデフォルトのTTL（委任チェーン内の60秒短縮の対象外、architecture.md §11）で、order-serviceの中継トークン（audience=inventory-service）は60秒TTLでキャッシュされる。後者は「短命トークンでもキャッシュ有効期限を正しく守れば安全に使い回せる」という、監査にとって最も厳しい条件での検証になる
+- frontendの中継トークン（audience=order-service/employee-service）はrealmデフォルトのTTL（委任チェーン内の60秒短縮の対象外、architecture.md §8）で、order-serviceの中継トークン（audience=inventory-service）は60秒TTLでキャッシュされる。後者は「短命トークンでもキャッシュ有効期限を正しく守れば安全に使い回せる」という、監査にとって最も厳しい条件での検証になる
 - frontendがorder-service向けトークンをキャッシュする結果、order-serviceが受け取る`jti`は同一セッション内で安定する。これによりorder-service自身のキャッシュ（audience=inventory-service）も、異なるエンドポイント（`/orders`のPOST、`/warehouse-stock/{id}`のGET）にまたがって同じキャッシュキーでヒットするようになり、当初想定していなかった副次的な集約効果が生まれた（実測：`docs/audit-demo.md`参照）
 - **実データで検証済み**：同一エンドポイントを連続で呼ぶシナリオ（`audit/scenario.py`）で、2回のHTTPリクエスト（＝異なるtrace_id）が同一jtiを使い回すことをログで確認した。この状態で監査（`audit/audit.py`）を実行し、CHECK2が偽陽性を出さないこと（キャッシュ再利用は正当なアクセスとして扱われる）を確認した。旧`trace_id`相関のままだったら、2回目のリクエストは新しいtrace_idを持つのに対応するTOKEN_EXCHANGEイベントが存在せず「未記録」として誤検知していたはずのケース。詳細と実行結果は[audit-demo.md](../audit-demo.md)を参照
 - inventory-service・warehouse-serviceの間（audience=warehouse-service/employee-service）は引き続きリクエストのたびにToken Exchangeを行う。将来これらもキャッシュする場合、同じ設計（`(subjectJti, audience)`キー＋`expires_in`ベースの期限管理）をそのまま横展開できる

@@ -39,6 +39,6 @@ CHECK1（隣接ホップ間のjti使い回し検出、user-facing⇔downstream�
 
 - CHECK2はOTelのtrace伝播が及ぶ範囲に依存しなくなった。手動検証・計装されていないツール経由のアクセスであっても、Keycloakの発行記録さえあれば正しく「正当」と判定される。
 - 将来、委任チェーンの中継トークンをキャッシュして複数リクエストで再利用する実装に変えても、CHECK2は偽陽性を出さない。
-- Keycloakへの`TOKEN_EXCHANGE`イベントクエリは、レポート対象ウィンドウの開始時刻より`AUDIT_EXCHANGE_LOOKBACK_SECONDS`（既定300秒）遡って取得する。中継トークンのTTLは60秒（architecture.md §11）だが、キャッシュされたトークンの発行時刻がウィンドウ開始前になりうるケースに余裕を持って対応するため。
+- Keycloakへの`TOKEN_EXCHANGE`イベントクエリは、レポート対象ウィンドウの開始時刻より`AUDIT_EXCHANGE_LOOKBACK_SECONDS`（既定300秒）遡って取得する。中継トークンのTTLは60秒（architecture.md §8）だが、キャッシュされたトークンの発行時刻がウィンドウ開始前になりうるケースに余裕を持って対応するため。
 - 実際にこの設計変更で検知された例：order-serviceの資格情報で、Token Exchange専用のoptional client scope（`inventory`、[ADR 0007](0007-topology-control-via-optional-client-scopes.md)）をclient_credentialsグラントで直接要求し、Token Exchangeを経ずにaudience=inventory-serviceのトークンを取得してinventory-serviceへ直接アクセスするケース。Keycloakはこれを`type="CLIENT_LOGIN"`として記録し`TOKEN_EXCHANGE`イベントを生成しないため、CHECK2が確実に検知する。詳細と実行結果は[audit-demo.md](../audit-demo.md)参照。
 - trace_idとOTelトレースは、経路の可視化・デバッグの手段としては引き続き有効であり撤去しない（[ADR 0005](0005-delegation-audit-with-opentelemetry.md)の役割分担は維持）。監査の正当性判定の根拠としてのみ使わなくなった。

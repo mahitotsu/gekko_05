@@ -2,13 +2,11 @@
 
 本ドキュメントは現在有効なアーキテクチャの断面のみを記録する。何を・なぜ実現するか（目的・背景・要求水準）は[requirements.md](requirements.md)、個々の設計判断の根拠・選択経緯は [docs/adr/](adr/) を参照。決定が変わった場合は該当箇所を直接書き換え、対応する ADR を Superseded に更新する。個々の実装で見つかった罠・気づきは[insights.md](insights.md)、未着手の改善項目は[backlog.md](backlog.md)を参照。
 
-セクション番号は他ドキュメントから直接参照されているため、削除した番号（1・2・6・20）は詰めずに欠番のままにしている。
-
-## 3. 採用する認可サーバー (AS)
+## 1. 採用する認可サーバー (AS)
 
 **Keycloak**（26.2+, Standard Token Exchange V2）を使用する。→ [ADR 0001](adr/0001-authorization-server-keycloak.md)
 
-## 4. サービス構成（多段委任構成）
+## 2. サービス構成（多段委任構成）
 
 基幹システムのモチーフ: **受発注システム**。
 
@@ -45,7 +43,7 @@
 [Employee Service: Python]  ── 属性局。ユーザーの所属・権限情報を提供する。委任チェーンの終端
 ```
 
-「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)、設計は§12）。
+「誰が誰に委任できるか」というトポロジー制御（例: warehouse-service向け交換を要求できるのはinventory-serviceのみ）は、各クライアントに付与する optional client scope のみで実現する（[ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)、設計は§9）。
 
 各サービスの存在意義・提供機能・保有データは[services.md](services.md)、具体的な業務シナリオは[use-cases.md](use-cases.md)、認可のディシジョンテーブルは[permission-matrix.md](permission-matrix.md)を参照。
 
@@ -53,8 +51,8 @@
 
 | サービス | 言語 | 役割 |
 |---|---|---|
-| edge-proxy | nginx | ホストに公開する唯一の入口（§17） |
-| Frontend | TypeScript / Nuxt (Nitro) | ユーザーログイン(OIDC Authorization Code + PKCE)、BFF（§14） |
+| edge-proxy | nginx | ホストに公開する唯一の入口（§14） |
+| Frontend | TypeScript / Nuxt (Nitro) | ユーザーログイン(OIDC Authorization Code + PKCE)、BFF（§11） |
 | Order Service | Java / Spring Boot | 受注登録。委任チェーンの起点（Hop0） |
 | Inventory Service | Go | 在庫確認。委任の中継点（Hop1） |
 | Warehouse Service | Rust | 支店別在庫。委任の中継点（Hop2）、ポリシー判定 |
@@ -69,11 +67,11 @@
 - 3ホップ全てをToken Exchange（Delegation）で統一し、`sub`（元ユーザー）を最後まで維持する
 - 業務データに対する認可判断の権威は、そのデータを保有するサービス1つに集約する。他サービスは中継に徹し、判断を持たない（例: 支店別在庫のアクセス制御はWarehouse Serviceのみが行う。ディシジョンテーブルは[permission-matrix.md](permission-matrix.md)表5、設計判断の経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照）
 
-## 5. Token Exchange の実装方式
+## 3. Token Exchange の実装方式
 
 **各サービスのアプリケーション本体で実装する**（Envoy等のプロキシ/サイドカーには委譲しない）。各サービスは Keycloak に対して自身のクライアント認証情報（confidential client）で `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` を直接呼び出す。→ [ADR 0002](adr/0002-token-exchange-in-application-layer.md)
 
-## 7. データストア（サービスごとに使い分け、DB-per-service）
+## 4. データストア（サービスごとに使い分け、DB-per-service）
 
 | サービス | DB | 選定理由 |
 |---|---|---|
@@ -82,18 +80,18 @@
 | Warehouse Service (Rust) | Redis | 在庫数の増減はホットパス。atomic INCR/DECRで引当処理を表現 |
 | Employee Service (Python) | MongoDB | 社員属性(所属・権限配列)はスキーマ柔軟なドキュメントが自然 |
 
-## 8. ローカル実行環境のオーケストレーション
+## 5. ローカル実行環境のオーケストレーション
 
-**Docker Compose** を採用する。`docker compose up` 一発で Keycloak + 5サービス + 4種DB + edge-proxy + grafana/otel-lgtm（トレース可視化、§10）が起動できる構成とする。→ [ADR 0003](adr/0003-local-orchestration-docker-compose.md)
+**Docker Compose** を採用する。`docker compose up` 一発で Keycloak + 5サービス + 4種DB + edge-proxy + grafana/otel-lgtm（トレース可視化、§7）が起動できる構成とする。→ [ADR 0003](adr/0003-local-orchestration-docker-compose.md)
 
-## 9. Keycloak Standard Token Exchange V2 の制約と対応
+## 6. Keycloak Standard Token Exchange V2 の制約と対応
 
 Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 
 - **ダウンスコープのみ**：`audience`パラメータで対象クライアント／スコープを絞り込んだ新トークンを発行する。`sub`（元ユーザー）はそのまま維持される（偽装ではない）。本サンプルはこの**Delegation（委任）**方式のみを用いる。`sub`自体を差し替えるImpersonation方式は使用しない
 - Fine-Grained Admin Permissions は**不要**（V1からの簡略化）
 - `subject_token`の`aud`に要求元クライアントが含まれている必要がある（自分自身のトークンを交換する場合を除く）。Keycloakが交換**時点**でこれを検証するため、権限のないクライアントが他クライアント宛のトークンを流用して交換することはできない
-- 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§12）
+- 委任トポロジーの制御は、**各クライアントに付与するoptional client scope**だけで実現する（詳細は§9）
 - **RFC 8693 の `act` クレーム（委任チェーンの表現）は標準では生成されない**。実験的機能（`token-exchange-delegation`等）には依存せず、Standard V2 のみを使用する（→ [ADR 0004](adr/0004-keycloak-standard-v2-no-experimental-features.md)）
 
 ### リスク評価
@@ -102,9 +100,9 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 |---|---|---|
 | `sub`（誰の権利で処理しているか） | 維持される。Keycloak発行トークンで暗号学的に保証 | アクセス権の照会・制御はこれのみで実現可能 |
 | 委任トポロジーのリアルタイム制御 | optional client scopeの割当で実現。不正なホップ飛ばしはKeycloak自身が拒否する | リスクなし |
-| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§10・[ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)参照） | ログ突合で代替（§10） |
+| 委任チェーンの事後監査証跡（`act`相当） | 標準V2ではJWTに残らない。Keycloak内部の管理イベントログに残る（**要設定：`eventsEnabled=true`かつinfoレベルのログ出力。デフォルトは無効**。詳細は§7・[ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)参照） | ログ突合で代替（§7） |
 
-## 10. 委任チェーンの事後監査
+## 7. 委任チェーンの事後監査
 
 **OpenTelemetry（W3C Trace Context）** に従う。→ [ADR 0005](adr/0005-delegation-audit-with-opentelemetry.md)
 
@@ -115,16 +113,16 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 - トークン発行・利用記録とアクセスログを突合する監査ツールを`audit/`に実装済み。突合キーは`trace_id`ではなく`(jti, audience)`——リクエスト単位の経路相関ではなく、識別子の集合演算に還元することで、トークンのキャッシュ再利用やtrace伝播の途切れに依存しない決定論的な判定にしている（→ [ADR 0012](adr/0012-jti-audience-correlation-for-token-exchange-audit.md)）。デモ手順と実行結果は[audit-demo.md](audit-demo.md)を参照
 - OTelトレースは「経路の可視化・デバッグ」を担い、Keycloakイベントログは「認可交換の事実の記録」を担う（役割が異なるため両方を維持する。監査の正当性判定はKeycloakイベントログ側の`(jti, audience)`にのみ依拠する）
 
-## 11. トークン漏洩・再提示リスクへの対策
+## 8. トークン漏洩・再提示リスクへの対策
 
 → [ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)
 
-- **DPoP (RFC 9449)**：適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外。メカニズムの詳細は§15
+- **DPoP (RFC 9449)**：適用範囲はfrontend（ユーザーがブラウザで直接触る、最も漏洩経路の多い区間）のみ。内部のサービス間委任チェーン（Order→Inventory→Warehouse→Employee）は対象外。メカニズムの詳細は§12
 - **内部委任チェーンの短TTL化**：Order→Inventory→Warehouse→Employeeで交換される中継トークンはTTLを60秒に設定する（realmデフォルトの5分から短縮）。実装は`keycloak/realm-export.json`のorder-service/inventory-service/warehouse-serviceクライアントへの`access.token.lifespan: "60"`属性設定。frontendの中継トークンおよびemployee-serviceは対象外（DPoP送信者拘束済み、またはチェーン末端のため）
 - **Token Exchange結果のキャッシュ**：frontendとorder-serviceは、Token Exchange結果を`(subjectトークンのjti, audience)`単位でキャッシュし、`expires_in`が切れるまで同じトークンを使い回す。inventory-service・warehouse-serviceには未実装。→ [ADR 0013](adr/0013-token-exchange-result-caching.md)
 - **mTLS(RFC 8705)は不採用**（本サンプルのスコープ外）
 
-## 12. 委任トポロジー制御（Client Policies不要）
+## 9. 委任トポロジー制御（Client Policies不要）
 
 → [ADR 0007](adr/0007-topology-control-via-optional-client-scopes.md)（実機検証結果も同ADRを参照）
 
@@ -136,9 +134,9 @@ Keycloak 26.2+ の Standard Token Exchange V2 は以下の性質を持つ。
 | `warehouse` | warehouse-service | inventory-service |
 | `employee` | employee-service | warehouse-service |
 
-DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを引き続き使用する（トポロジー制御とは別目的）。
+DPoP（§8）はClient Policiesの`dpop-bind-enforcer`実行アクションを引き続き使用する（トポロジー制御とは別目的）。
 
-## 13. Keycloak realmのコード化
+## 10. Keycloak realmのコード化
 
 → [ADR 0008](adr/0008-minimal-realm-export-json.md)
 
@@ -146,7 +144,7 @@ DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 
 `realm-export.json`は**意図して追加・変更した項目のみ**を記述する（realm本体、client scope 4種とaudienceマッパー、client 5種とその設定、テストユーザー4件）。縮小版realm設定で追加対応が必要だった`sub`クレームマッパーの明示は[ADR 0008](adr/0008-minimal-realm-export-json.md)、`KC_HOSTNAME`固定は[ADR 0009](adr/0009-bff-with-edge-proxy.md)を参照。
 
-## 14. Frontend実装（BFF）の設計
+## 11. Frontend実装（BFF）の設計
 
 `frontend/`はNuxt 4（Nitro）による単一コンテナのBFF (Backend for Frontend) として実装する。
 
@@ -156,9 +154,9 @@ DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 - 画面（`app/app.vue`）は受注登録フォーム・受注一覧・社員情報照会のみで、全て同一オリジンの`/api/*`へfetchする
 - `frontend/e2e/login-and-order.mjs`（`npm run e2e`）としてPlaywright E2Eテストを常設。ログイン→受注登録→一覧反映→自分の社員情報照会までを実ブラウザで検証する。`keycloak/tests/permission-matrix.sh`がKeycloak層の検証を担うのと対になる、UIからの検証
 
-## 15. DPoPの設計
+## 12. DPoPの設計
 
-§11で採用したDPoP (RFC 9449) の適用範囲はfrontendのみ。
+§8で採用したDPoP (RFC 9449) の適用範囲はfrontendのみ。
 
 - **Keycloak**：`frontend`クライアントの属性に`dpop.bound.access.tokens: true`を設定。トークン発行時にDPoP Proofを必須にし、発行するアクセストークンに`cnf.jkt`（公開鍵のJWK拇印）を埋め込む
 - **Frontend（BFF）**：鍵ペア生成・Proof JWT署名は`server/utils/dpop.ts`（`jose`ライブラリ、ES256）でサーバーサイドに自前実装。鍵ペアはセッションと同じインメモリストアに保持し、ログイン時に生成した1つの鍵をそのセッション中は使い回す
@@ -166,39 +164,39 @@ DPoP（§11）はClient Policiesの`dpop-bind-enforcer`実行アクションを�
 
 Token Exchangeの呼び出し元がDPoP-boundな場合の交換後トークンへの伝播ルールは[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)、実装中に踏んだ罠（nginx経由でのDPoP検証失敗等）は[insights.md](insights.md)を参照。
 
-## 16. OpenTelemetry分散トレーシングの採用範囲
+## 13. OpenTelemetry分散トレーシングの採用範囲
 
-§10で決めた方針を、5アプリサービス＋Keycloakに実装する（edge-proxyは対象外）。
+§7で決めた方針を、5アプリサービス＋Keycloakに実装する（edge-proxyは対象外）。
 
 - 各サービスとも自動計装を優先し、独自スパンを最小限に留める（Java: Micrometer OTelブリッジ、Go: `otelhttp`、Rust: `axum-tracing-opentelemetry`、Python: `opentelemetry-instrument`ゼロコード計装、Node/Nuxt: `NodeSDK`、Keycloak: `KC_TRACING_ENABLED`）
 - DBレベルのスパンも追加（PostgreSQL/MySQL/MongoDB/H2）。Redis（Warehouse Service）のみ定番の計装ライブラリが無く手動対応
 - **edge-proxy（nginx）は意図的に計装しない**：nginxのOTelモジュールは受信側のスパンしか作れず、Tempoのservice graphが要求するCLIENT側スパンを生成できない。CDN/APIゲートウェイ相当の透過的インフラとして扱い、計装自体を撤去した
 - 各言語の実装方式の詳細、ヘルスチェックをトレースから除外する方法、DBノードの命名規則、実装中に見つかった罠は[insights.md](insights.md)を参照
 
-## 17. BFF化とedge-proxyの導入
+## 14. BFF化とedge-proxyの導入
 
 → [ADR 0009](adr/0009-bff-with-edge-proxy.md)
 
 OAuth 2.0 Security BCP（Browser-Based Apps向けガイダンス）に従い、アクセストークンをブラウザに渡さないBFF構成を採用する。
 
-- **Frontendのサーバー化**：`frontend/`をNuxt（Nitro）の単一コンテナとし、ログイン処理・トークン保有をサーバーサイド（`server/api/*`）に完全に閉じる（§14）
+- **Frontendのサーバー化**：`frontend/`をNuxt（Nitro）の単一コンテナとし、ログイン処理・トークン保有をサーバーサイド（`server/api/*`）に完全に閉じる（§11）
 - **edge-proxyの新設**：`edge-proxy/`（nginx）をfrontendの前段に配置し、ホストに公開する唯一の入口とする。`/realms/*`・`/resources/*`はKeycloakへ、それ以外はfrontendへ振り分ける
 - **Keycloakのホスト直接公開を廃止**：`KC_HOSTNAME`をedge-proxyの公開アドレス（`http://localhost:3000`）に固定。ブラウザ・バックエンドサービスのいずれも同一の`iss`値に到達する
 - **frontendクライアントを機密クライアント化**：`publicClient: false`＋`secret`、`standard.token.exchange.enabled: true`。`directAccessGrantsEnabled`はテストハーネス（`permission-matrix.sh`）のためにあえて`true`のまま残す
 - **各サービスのホストポート公開を削除**：edge-proxyの3000のみ公開
 - **CORS設定の削除**：Order Service・Employee ServiceはBFF経由でのみ呼ばれるため
 
-## 18. 既知の制約として受容した事項
+## 15. 既知の制約として受容した事項
 
 ### 内部サービス間チェーンへのDPoP非適用
 
-Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない（§11）。理由・リスク評価は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照。
+Order→Inventory→Warehouse→Employee の委任チェーンでやり取りされるトークンには送信者拘束（DPoP）を適用しない（§8）。理由・リスク評価は[ADR 0006](adr/0006-dpop-for-frontend-not-mtls.md)を参照。
 
 ### issuerの「localhost」感・ポート番号残存
 
 edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には`localhost`という文字列とポート番号が残っている。解消方針の検討は[backlog.md](backlog.md)を参照。
 
-## 19. アプリ層の認可DENYログ（異常検知・デバッグ用）
+## 16. アプリ層の認可DENYログ（異常検知・デバッグ用）
 
 → [ADR 0010](adr/0010-authz-deny-log-for-debugging.md)
 
