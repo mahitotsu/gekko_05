@@ -79,7 +79,7 @@ Inventory Serviceとの違いを明確にするため、Warehouse Serviceは2段
 
 この3行×2列＝6ケースに対応する自動テストは未整備。
 
-この表の判定権威はWarehouse Service一箇所にのみ存在する。UC8/UC9/UC10の経路上にあるOrder Service・Inventory Serviceは、本表のロールを判定せずToken Exchangeで中継するのみ（architecture.md §20）。かつてはOrder Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの双方が本表と同じロールを重複判定しており、層の責務分離の課題として[backlog.md](backlog.md)に起票されていたが、architecture.md §20で解消済み。
+この表の判定権威はWarehouse Service一箇所にのみ存在する。UC8/UC9/UC10の経路上にあるOrder Service・Inventory Serviceは、本表のロールを判定せずToken Exchangeで中継するのみ。かつてはOrder Serviceの`WarehouseStockController`とInventory Serviceの`/warehouse-stock`ルートの双方が本表と同じロールを重複判定しており、層の責務分離の課題として[backlog.md](backlog.md)に起票されていたが、この設計変更（経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)参照）で解消済み。
 
 ## テストユーザー
 

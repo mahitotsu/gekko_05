@@ -83,7 +83,7 @@ RFC 8693 はこれらを解決するため、スコープ絞り込みによる�
 - スコープの段階的絞り込み（`order` → `inventory` → `warehouse` → `employee`）
 - 各ホップでの認可判定の違い（ユーザー権限 vs 委任元サービスの正当性）
 - 3ホップ全てをToken Exchange（Delegation）で統一し、`sub`（元ユーザー）を最後まで維持する
-- 業務データに対する認可判断の権威は、そのデータを保有するサービス1つに集約する。他サービスは中継に徹し、判断を持たない（例: 支店別在庫のアクセス制御はWarehouse Serviceのみが行う。詳細は§20）
+- 業務データに対する認可判断の権威は、そのデータを保有するサービス1つに集約する。他サービスは中継に徹し、判断を持たない（例: 支店別在庫のアクセス制御はWarehouse Serviceのみが行う。ディシジョンテーブルは[permission-matrix.md](permission-matrix.md)表5、設計判断の経緯は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照）
 
 ## 5. Token Exchange の実装方式
 
@@ -234,23 +234,3 @@ edge-proxy化後もissuer（`http://localhost:3000/realms/kikan-system`）には
   - Inventory Service（[auth.go](../inventory-service/auth.go)の`authMiddleware`）：`role_missing`を`required_roles`フィールドとともに記録
 - `audit/audit.py`の既存チェック（CHECK1〜3）は`type = "access_log"`でフィルタしており、`authz_deny`行は無関係のため影響しない
 
-## 20. 支店在庫照会の認可設計（Warehouse Serviceへの権威集中）
-
-→ [ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)
-
-### 原則
-
-[services.md](services.md)が定義する存在意義に従い、支店アクセスに関する認可判断の権威は**Warehouse Service一箇所にのみ**存在する。Order Service・Inventory Serviceはこの判断について発言権を持たず、中継に徹する。
-
-### 現在のエンドポイント契約
-
-`GET /warehouse/stock/:product_id`（支店をパスに含めない）→ 常に200。**自分が見える支店の在庫のみを返す**。
-
-- Warehouse Service（[handlers.rs](../warehouse-service/src/handlers.rs)の`get_stock_by_branches`）：RBAC（ロールが全く無ければ403、UC9）はそのまま残す。`warehouse-viewer-all`はこの商品の実在庫を持つ全支店を返す（UC8）。`warehouse-viewer`は自分の支店1件のみを返し、該当データが無ければ空集合（UC10。エラーではなく正直な「該当なし」）
-- Inventory Service（[main.go](../inventory-service/main.go)）：`/warehouse-stock/{productId}`（支店なし）。`requiredRoles`は`nil`（認証のみ）で、レスポンスは解釈せずそのまま中継
-- Order Service（[WarehouseStockController.java](../order-service/src/main/java/com/example/orderservice/WarehouseStockController.java)）：`@PreAuthorize`なし、`/warehouse-stock/{productId}`を中継
-- UC9の403（ロールが全く無い）だけはOrder Serviceまで透過的に伝播する
-
-### 権限トークンの取得経路の制約
-
-frontendのKeycloakクライアントには`order`・`employee`のoptionalClientScopeしか割り当てられておらず（`keycloak/realm-export.json`）、`inventory`・`warehouse`スコープのトークンを得る手段がそもそも存在しない（permission-matrix.md 表1）。Order Service・Inventory Serviceがこの機能について中継に徹する設計の妥当性は[ADR 0011](adr/0011-warehouse-stock-visibility-endpoint.md)を参照。

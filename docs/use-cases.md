@@ -100,7 +100,7 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 
 ## 支店別在庫照会（物流管理）
 
-この画面のリクエストは商品IDのみを指定し、支店を指定しない。「支店Xの在庫は？」ではなく「**自分が見える範囲**の在庫は？」という質問として設計されている（architecture.md §20）。そのためABAC（所属支店との一致・不一致）は個別のエラーではなく、レスポンスに含まれる支店の数として現れる。RBAC（`warehouse-viewer`/`warehouse-viewer-all`をどちらも持たない）だけは、この画面自体の利用資格の有無を問う別種の判定として、従来通り明示的な拒否のまま残す。
+この画面のリクエストは商品IDのみを指定し、支店を指定しない。「支店Xの在庫は？」ではなく「**自分が見える範囲**の在庫は？」という質問として設計されている（[permission-matrix.md](permission-matrix.md) 表5）。そのためABAC（所属支店との一致・不一致）は個別のエラーではなく、レスポンスに含まれる支店の数として現れる。RBAC（`warehouse-viewer`/`warehouse-viewer-all`をどちらも持たない）だけは、この画面自体の利用資格の有無を問う別種の判定として、従来通り明示的な拒否のまま残す。
 
 ### UC8: 正常系（`warehouse-viewer-all`は全支店が見える）
 
@@ -110,7 +110,7 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 1. sato-logistics が frontend からログインし、Order Service経由の受注照会は行わず、
    物流管理向けの画面から商品（例: product-A、東京・大阪の両方に実在庫がある）の在庫を確認する
 2. Warehouse Serviceへ到達するまでの経路はUC1と同様（Order Service→Inventory Service→Warehouse Service）
-   だが、Order Service・Inventory Serviceはいずれも支店に関する判断を持たず中継するのみ（architecture.md §20）
+   だが、Order Service・Inventory Serviceはいずれも支店に関する判断を持たず中継するのみ（[permission-matrix.md](permission-matrix.md) 表5）
 3. Warehouse Service: warehouse-viewer-allロールを保持 → 所属支店（大阪）に関わらず、
    この商品の実在庫を持つ全支店（東京・大阪）を列挙して返す（permission-matrix.md 表5）
 ```
@@ -134,7 +134,7 @@ suzuki-supportは`warehouse-viewer`を持たないが、UC2では支店別の実
 ```
 1. suzuki-support が物流管理向けの在庫照会画面の利用を試みる
 2. Order Service・Inventory Serviceは支店アクセスについて権限判断の権威を持たない
-   （architecture.md §20）ため、いずれもロールチェックをせずToken Exchangeで中継するのみ
+   （[permission-matrix.md](permission-matrix.md) 表5）ため、いずれもロールチェックをせずToken Exchangeで中継するのみ
 3. Warehouse Service: warehouse-viewerもwarehouse-viewer-allも持たない → 拒否（permission-matrix.md 表5「その他」行）
 ```
 
